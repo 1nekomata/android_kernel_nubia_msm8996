@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -48,7 +48,6 @@
 #include <ol_cfg.h>
 #include <ol_rx.h>
 #include <ol_htt_rx_api.h>
-#include <ol_txrx_peer_find.h>
 #include <htt_internal.h> /* HTT_ASSERT, htt_pdev_t, HTT_RX_BUF_SIZE */
 #include "regtable.h"
 #include "adf_trace.h"
@@ -109,6 +108,21 @@ extern int process_wma_set_command(int sessid, int paramid,
 
 void
 htt_rx_hash_deinit(struct htt_pdev_t *pdev);
+
+static int
+CEIL_PWR2(int value)
+{
+    int log2;
+    if (IS_PWR2(value)) {
+        return value;
+    }
+    log2 = 0;
+    while (value) {
+        value >>= 1;
+        log2++;
+    }
+    return (1 << log2);
+}
 
 /*
  * This function is used both below within this file (which the compiler
@@ -179,7 +193,7 @@ htt_rx_ring_size(struct htt_pdev_t *pdev)
     if (size > HTT_RX_RING_SIZE_MAX) {
         size = HTT_RX_RING_SIZE_MAX;
     }
-    size = adf_os_get_pwr2(size);
+    size = CEIL_PWR2(size);
     return size;
 }
 
@@ -204,21 +218,12 @@ htt_rx_ring_fill_level(struct htt_pdev_t *pdev)
     return size;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
-static void
-htt_rx_ring_refill_retry(struct timer_list *t)
-{
-	htt_pdev_handle pdev = from_timer(pdev, t, rx_ring.refill_retry_timer);
-	htt_rx_msdu_buff_replenish(pdev);
-}
-#else
 static void
 htt_rx_ring_refill_retry(void *arg)
 {
     htt_pdev_handle pdev = (htt_pdev_handle)arg;
     htt_rx_msdu_buff_replenish(pdev);
 }
-#endif
 
 void
 htt_rx_ring_fill_n(struct htt_pdev_t *pdev, int num)
@@ -228,13 +233,6 @@ htt_rx_ring_fill_n(struct htt_pdev_t *pdev, int num)
     struct htt_host_rx_desc_base *rx_desc;
 
     idx = *(pdev->rx_ring.alloc_idx.vaddr);
-
-    if ((idx < 0) || (idx > pdev->rx_ring.size_mask) ||
-        (num > pdev->rx_ring.size))  {
-        adf_os_print("%s:rx refill failed!\n", __func__);
-        return;
-    }
-
     while (num > 0) {
         u_int32_t paddr;
         adf_nbuf_t rx_netbuf;
@@ -328,13 +326,6 @@ htt_rx_ring_fill_n(struct htt_pdev_t *pdev, int num)
     }
 
 fail:
-    /*
-     * Make sure alloc index write is reflected correctly before FW polls
-     * remote ring write index as compiler can reorder the instructions
-     * based on optimizations.
-     */
-
-    adf_os_mb();
     *(pdev->rx_ring.alloc_idx.vaddr) = idx;
     return;
 }
@@ -1307,13 +1298,6 @@ htt_rx_frag_pop_hl(
 }
 
 int
-htt_rx_offload_msdu_cnt_ll(
-    htt_pdev_handle pdev)
-{
-    return htt_rx_ring_elems(pdev);
-}
-
-int
 htt_rx_offload_msdu_pop_ll(
     htt_pdev_handle pdev,
     adf_nbuf_t offload_deliver_msg,
@@ -1614,81 +1598,15 @@ unsigned char get_nr_antenna(struct htt_host_rx_desc_base *rx_desc)
 }
 
 /**
- * get_ht_vht_info_ll() - get ht/vht information
- * @rx_desc: pointer to PPDU start
- * @rx_status: pointer to mon_rx_status.
- *
- * This function retrieve MCS/VHT info by parsing preamble,
- * vht_sig_a1 and vht_sig_a2, which follows ieee80211 spec.
- *
- * Return: None.
- */
-static void get_ht_vht_info_ll(struct rx_ppdu_start rx_desc,
-                              struct mon_rx_status *rx_status)
-{
-	uint8_t preamble_type =
-		(uint8_t)rx_desc.preamble_type;
-	uint32_t ht_sig_vht_sig_a_1 = rx_desc.ht_sig_vht_sig_a_1;
-	uint32_t ht_sig_vht_sig_a_2 = rx_desc.ht_sig_vht_sig_a_2;
-	switch (preamble_type) {
-	case 8:
-	case 9:
-		rx_status->mcs_info.valid = 1;
-		rx_status->vht_info.valid = 0;
-		rx_status->mcs_info.mcs = ht_sig_vht_sig_a_1 & 0x7f;
-		rx_status->nr_ant = rx_status->mcs_info.mcs >> 3;
-		rx_status->mcs_info.bw = (ht_sig_vht_sig_a_1 >> 7) & 0x1;
-		rx_status->mcs_info.smoothing = ht_sig_vht_sig_a_2 & 0x1;
-		rx_status->mcs_info.not_sounding =
-			(ht_sig_vht_sig_a_2 >> 1) & 0x1;
-		rx_status->mcs_info.aggregation =
-			(ht_sig_vht_sig_a_2 >> 3) & 0x1;
-		rx_status->mcs_info.stbc = (ht_sig_vht_sig_a_2 >> 4) & 0x3;
-		rx_status->mcs_info.fec = (ht_sig_vht_sig_a_2 >> 6) & 0x1;
-		rx_status->mcs_info.sgi = (ht_sig_vht_sig_a_2 >> 7) & 0x1;
-		rx_status->mcs_info.ness = (ht_sig_vht_sig_a_2 >> 8) & 0x3;
-		break;
-	case 0x0c: /* VHT w/o TxBF */
-	case 0x0d: /* VHT w/ TxBF */
-		rx_status->vht_info.valid = 1;
-		rx_status->mcs_info.valid = 0;
-		rx_status->vht_info.bw = ht_sig_vht_sig_a_1 & 0x3;
-		rx_status->vht_info.stbc = (ht_sig_vht_sig_a_1 >> 3) & 0x1;
-		/* Currently only handle SU case */
-		rx_status->vht_info.gid = (ht_sig_vht_sig_a_1 >> 4) & 0x3f;
-		rx_status->vht_info.nss = (ht_sig_vht_sig_a_1 >> 10) & 0x7;
-		rx_status->nr_ant = (ht_sig_vht_sig_a_1 >> 10) & 0x7;
-		rx_status->vht_info.paid = (ht_sig_vht_sig_a_1 >> 13) & 0x1ff;
-		rx_status->vht_info.txps_forbidden =
-			(ht_sig_vht_sig_a_1 >> 22) & 0x1;
-		rx_status->vht_info.sgi = ht_sig_vht_sig_a_2 & 0x1;
-		rx_status->vht_info.sgi_disambiguation =
-			(ht_sig_vht_sig_a_2 >> 1) & 0x1;
-		rx_status->vht_info.coding = (ht_sig_vht_sig_a_2 >> 2) & 0x1;
-		rx_status->vht_info.ldpc_extra_symbol =
-			(ht_sig_vht_sig_a_2 >> 3) & 0x1;
-		rx_status->vht_info.mcs = (ht_sig_vht_sig_a_2 >> 4) & 0xf;
-		rx_status->vht_info.beamformed =
-			(ht_sig_vht_sig_a_2 >> 8) & 0x1;
-		break;
-	default:
-		rx_status->mcs_info.valid = 0;
-		rx_status->vht_info.valid = 0;
-		rx_status->nr_ant = 1;
-		break;
-	}
-}
-
-/**
- * htt_get_radiotap_rx_status_ll() - Update information about the rx status,
- * which is used later for radiotap updation.
+ * htt_get_radiotap_rx_status() - Update information about the rx status, which
+ * is used later for radiotap updation.
  * @rx_desc: Pointer to struct htt_host_rx_desc_base
  * @rx_status: Return variable updated with rx_status
  *
  * Return: None
  */
-void htt_get_radiotap_rx_status_ll(struct htt_host_rx_desc_base *rx_desc,
-			struct mon_rx_status *rx_status)
+void htt_get_radiotap_rx_status(struct htt_host_rx_desc_base *rx_desc, struct
+		       mon_rx_status *rx_status)
 {
 	uint16_t channel_flags = 0;
 
@@ -1702,10 +1620,7 @@ void htt_get_radiotap_rx_status_ll(struct htt_host_rx_desc_base *rx_desc,
 	rx_status->chan_flags = channel_flags;
 	rx_status->ant_signal_db = rx_desc->ppdu_start.rssi_comb;
 	rx_status->nr_ant = get_nr_antenna(rx_desc);
-	get_ht_vht_info_ll(rx_desc->ppdu_start, rx_status);
 }
-
-struct mon_rx_status g_ll_rx_status;
 
 /**
  * htt_rx_mon_amsdu_rx_in_order_pop_ll() - Monitor mode HTT Rx in order pop
@@ -1731,18 +1646,14 @@ htt_rx_mon_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
 	uint32_t msdu_count = 0;
 	struct htt_host_rx_desc_base *rx_desc;
 	struct mon_rx_status rx_status = {0};
-	struct htt_rx_in_ord_paddr_ind_hdr_t *host_msg_hdr;
 	uint32_t amsdu_len;
 	uint32_t len;
 	uint32_t last_frag;
-	uint32_t ch_freq;
 
 	HTT_ASSERT1(htt_rx_in_order_ring_elems(pdev) != 0);
 
 	rx_ind_data = adf_nbuf_data(rx_ind_msg);
 	msg_word = (uint32_t *)rx_ind_data;
-	host_msg_hdr = (struct htt_rx_in_ord_paddr_ind_hdr_t *)rx_ind_data;
-	ch_freq = vos_chan_to_freq(host_msg_hdr->reserved_1);
 
 	HTT_PKT_DUMP(vos_trace_hex_dump(VOS_MODULE_ID_TXRX,
 					VOS_TRACE_LEVEL_FATAL,
@@ -1784,17 +1695,12 @@ htt_rx_mon_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
 		 * Make the netbuf's data pointer point to the payload rather
 		 * than the descriptor.
 		 */
-		if(rx_desc->attention.first_mpdu) {
-			memset(&rx_status, 0, sizeof(struct mon_rx_status));
-			rx_status.chan = (uint16_t)ch_freq;
-			htt_get_radiotap_rx_status_ll(rx_desc, &rx_status);
-			memcpy(&g_ll_rx_status,&rx_status,sizeof(struct mon_rx_status));
-		}
+		htt_get_radiotap_rx_status(rx_desc, &rx_status);
 		/*
 		 * 250 bytes of RX_STD_DESC size should be sufficient for
 		 * radiotap.
 		 */
-		adf_nbuf_update_radiotap(&g_ll_rx_status, msdu,
+		adf_nbuf_update_radiotap(&rx_status, msdu,
 						  HTT_RX_STD_DESC_RESERVATION);
 		amsdu_len = HTT_RX_IN_ORD_PADDR_IND_MSDU_LEN_GET(*(msg_word
 								  + 1));
@@ -1852,279 +1758,6 @@ htt_rx_mon_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev, adf_nbuf_t rx_ind_msg,
 
 	return 1;
 }
-
-/**
- * get_ht_vht_info() - get ht/vht information
- * @rx_desc: pointer to htt_host_rx_desc_base.
- * @rx_status: pointer to mon_rx_status.
- *
- * This function retrieve MCS/VHT info by parsing preamble,
- * vht_sig_a1 and vht_sig_a2, which follows ieee80211 spec.
- * Since high latency path doesn't config PPDU/MPDU start/end,
- * it only uses the info which htt_rx_ppdu_desc_t has.
- *
- * Return: None.
- */
-static void get_ht_vht_info_hl(struct htt_rx_ppdu_desc_t *rx_desc,
-			       struct mon_rx_status *rx_status)
-{
-	uint8_t preamble_type =
-		(uint8_t)rx_desc->preamble_type;
-
-	switch (preamble_type) {
-	case 8:
-	case 9:
-		rx_status->mcs_info.valid = 1;
-		rx_status->vht_info.valid = 0;
-		rx_status->mcs_info.mcs = rx_desc->vht_sig_a1 & 0x7f;
-		rx_status->nr_ant = rx_status->mcs_info.mcs >> 3;
-		rx_status->mcs_info.bw = (rx_desc->vht_sig_a1 >> 7) & 0x1;
-		rx_status->mcs_info.smoothing = rx_desc->vht_sig_a2 & 0x1;
-		rx_status->mcs_info.not_sounding =
-			(rx_desc->vht_sig_a2 >> 1) & 0x1;
-		rx_status->mcs_info.aggregation =
-			(rx_desc->vht_sig_a2 >> 3) & 0x1;
-		rx_status->mcs_info.stbc = (rx_desc->vht_sig_a2 >> 4) & 0x3;
-		rx_status->mcs_info.fec = (rx_desc->vht_sig_a2 >> 6) & 0x1;
-		rx_status->mcs_info.sgi = (rx_desc->vht_sig_a2 >> 7) & 0x1;
-		rx_status->mcs_info.ness = (rx_desc->vht_sig_a2 >> 8) & 0x3;
-		break;
-	case 0x0c: /* VHT w/o TxBF */
-	case 0x0d: /* VHT w/ TxBF */
-		rx_status->vht_info.valid = 1;
-		rx_status->mcs_info.valid = 0;
-		rx_status->vht_info.bw = rx_desc->vht_sig_a1 & 0x3;
-		rx_status->vht_info.stbc = (rx_desc->vht_sig_a1 >> 3) & 0x1;
-		/* Currently only handle SU case */
-		rx_status->vht_info.gid = (rx_desc->vht_sig_a1 >> 4) & 0x3f;
-		rx_status->vht_info.nss = (rx_desc->vht_sig_a1 >> 10) & 0x7;
-		rx_status->nr_ant = (rx_desc->vht_sig_a1 >> 10) & 0x7;
-		rx_status->vht_info.paid = (rx_desc->vht_sig_a1 >> 13) & 0x1ff;
-		rx_status->vht_info.txps_forbidden =
-			(rx_desc->vht_sig_a1 >> 22) & 0x1;
-		rx_status->vht_info.sgi = rx_desc->vht_sig_a2 & 0x1;
-		rx_status->vht_info.sgi_disambiguation =
-			(rx_desc->vht_sig_a2 >> 1) & 0x1;
-		rx_status->vht_info.coding = (rx_desc->vht_sig_a2 >> 2) & 0x1;
-		rx_status->vht_info.ldpc_extra_symbol =
-			(rx_desc->vht_sig_a2 >> 3) & 0x1;
-		rx_status->vht_info.mcs = (rx_desc->vht_sig_a2
-					>> 4) & 0xf;
-		rx_status->vht_info.beamformed = (rx_desc->vht_sig_a2
-					>> 8) & 0x1;
-		break;
-	default:
-		rx_status->mcs_info.valid = 0;
-		rx_status->vht_info.valid = 0;
-		rx_status->nr_ant = 1;
-		break;
-	}
-}
-
-/**
- * htt_get_radiotap_rx_status_hl() - Update information about the
- * rx status, which is used later for radiotap update.
- * @rx_desc: Pointer to struct htt_rx_ppdu_desc_t
- * @rx_status: Return variable updated with rx_status
- *
- * Return: None
- */
-void htt_get_radiotap_rx_status_hl(struct htt_rx_ppdu_desc_t *rx_desc,
-	struct mon_rx_status *rx_status)
-{
-	uint16_t channel_flags = 0;
-
-	rx_status->tsft = (u_int64_t)rx_desc->tsf32;
-	/* IEEE80211_RADIOTAP_F_FCS */
-	rx_status->flags |= 0x10;
-	rx_status->rate = get_rate(rx_desc->legacy_rate_sel,
-				   rx_desc->legacy_rate);
-	channel_flags |= rx_desc->legacy_rate_sel ?
-		IEEE80211_CHAN_CCK : IEEE80211_CHAN_OFDM;
-	if (rx_status->chan)
-		channel_flags |=
-			(vos_chan_to_band(vos_freq_to_chan(rx_status->chan))
-			== VOS_BAND_2GHZ ?
-			IEEE80211_CHAN_2GHZ : IEEE80211_CHAN_5GHZ);
-	rx_status->chan_flags = channel_flags;
-	rx_status->ant_signal_db = rx_desc->rssi_cmb;
-	get_ht_vht_info_hl(rx_desc, rx_status);
-}
-
-/**
- * htt_rx_mon_amsdu_pop_hl() - pop amsdu in HL monitor mode
- * @pdev: Pointer to struct htt_pdev_handle
- * @rx_ind_msg: htt rx indication message
- * @head_msdu: head msdu
- * @tail_msdu: tail msdu
- *
- * Return: 0 - success, others - failure
- */
-int
-htt_rx_mon_amsdu_pop_hl(
-		htt_pdev_handle pdev,
-		adf_nbuf_t rx_ind_msg,
-		adf_nbuf_t *head_msdu,
-		adf_nbuf_t *tail_msdu)
-{
-	struct htt_rx_ppdu_desc_t *rx_ppdu_desc;
-	void *rx_desc, *rx_mpdu_desc;
-	struct mon_rx_status rx_status = {0};
-	int rtap_len = 0;
-	uint16_t center_freq;
-	uint16_t chan1;
-	uint16_t chan2;
-	uint8_t phymode;
-	a_bool_t ret;
-
-	pdev->rx_desc_size_hl =
-		(adf_nbuf_data(rx_ind_msg))
-		[HTT_ENDIAN_BYTE_IDX_SWAP(
-				HTT_RX_IND_HL_RX_DESC_LEN_OFFSET)];
-
-	adf_nbuf_pull_head(rx_ind_msg,
-			sizeof(struct hl_htt_rx_ind_base));
-
-	*head_msdu = *tail_msdu = rx_ind_msg;
-
-	rx_desc = htt_rx_msdu_desc_retrieve(pdev, *head_msdu);
-	rx_ppdu_desc = (struct htt_rx_ppdu_desc_t *)((uint8_t *)(rx_desc) -
-			HTT_RX_IND_HL_BYTES + HTT_RX_IND_HDR_PREFIX_BYTES);
-
-	rx_mpdu_desc =
-		htt_rx_mpdu_desc_list_next(pdev, rx_ind_msg);
-	ret = htt_rx_msdu_center_freq(pdev, NULL, rx_mpdu_desc,
-				      &center_freq, &chan1, &chan2, &phymode);
-
-	if (ret == A_TRUE)
-		rx_status.chan = center_freq;
-	else
-		rx_status.chan = 0;
-
-	htt_get_radiotap_rx_status_hl(rx_ppdu_desc, &rx_status);
-	/*
-	 * set headroom size to 0 to append to tail of skb. For HL path,
-	 * rx desc size is variable and will be used later in ol_rx_deliver
-	 * function to reset adf_nbuf to payload. So, to avoid overwriting
-	 * the rx desc, radiotap header is added to the tail of adf_nbuf
-	 * at first and move to head before indicating to OS.
-	 */
-	rtap_len = adf_nbuf_update_radiotap(&rx_status, *head_msdu, 0);
-
-	adf_nbuf_set_next(*tail_msdu, NULL);
-	return 0;
-}
-
-int
-htt_rx_mac_header_mon_process(
-		htt_pdev_handle pdev,
-		adf_nbuf_t rx_ind_msg,
-		adf_nbuf_t *head_msdu,
-		adf_nbuf_t *tail_msdu)
-{
-	struct htt_hw_rx_desc_base *hw_desc;
-	struct ieee80211_frame_addr4 *mac_array;
-	uint8_t rtap_buf[sizeof(struct ieee80211_radiotap_header) + 100] = {0};
-	uint16_t rtap_len;
-	uint32_t *msg_word;
-	uint8_t *rx_ind_data;
-	adf_nbuf_t msdu = NULL;
-
-	/* num of mac header in rx_ind_msg */
-	int num_elems;
-	int elem;
-	uint32_t tsf;
-	uint32_t rssi_comb;
-
-	rx_ind_data = adf_nbuf_data(rx_ind_msg);
-	msg_word = (uint32_t *)rx_ind_data;
-	msg_word++;
-	num_elems = HTT_T2H_MONITOR_MAC_HEADER_NUM_MPDU_GET(*msg_word);
-
-	/* what's the num_elem max value? */
-	if (num_elems <= 0)
-		return 0;
-
-	if (num_elems > ((adf_nbuf_len(rx_ind_msg)
-		- HTT_T2H_MONITOR_MAC_HEADER_IND_HDR_SIZE
-		- sizeof(struct htt_hw_rx_desc_base))
-		/ sizeof(struct ieee80211_frame_addr4))) {
-		adf_os_print("%s: num_elems %d exceed range of nbuf \n",
-				     __func__, num_elems);
-		return 0;
-	}
-
-	/* get htt_hw_rx_desc_base_rx_desc pointer */
-	hw_desc = (struct htt_hw_rx_desc_base *)
-			(rx_ind_data + HTT_T2H_MONITOR_MAC_HEADER_IND_HDR_SIZE);
-
-	rssi_comb = hw_desc->ppdu_start.rssi_comb;
-	tsf = hw_desc->ppdu_end.tsf_timestamp;
-
-	/* construct one radiotap header */
-	rtap_len = adf_nbuf_construct_radiotap(
-					rtap_buf,
-					tsf,
-					rssi_comb);
-
-	/* get ieee80211_frame_addr4 array pointer*/
-	mac_array = (struct ieee80211_frame_addr4 *)
-			(rx_ind_data + HTT_T2H_MONITOR_MAC_HEADER_IND_HDR_SIZE +
-			 sizeof(struct htt_hw_rx_desc_base));
-
-	for (elem = 0; elem < num_elems; elem++) {
-		uint8_t *dest = NULL;
-		/*
-		 * copy each mac header +
-		 * radiotap header into single msdu buff
-		 */
-		msdu = adf_nbuf_alloc(
-			pdev->osdev,
-			rtap_len + sizeof(struct ieee80211_frame_addr4),
-			0, 4, TRUE);
-		if (!msdu)
-			return A_NO_MEMORY;
-
-		dest = adf_nbuf_put_tail(msdu, rtap_len);
-		if (!dest) {
-			adf_os_print("%s: No buffer to save radiotap len %d\n",
-				     __func__, rtap_len);
-			return	A_NO_MEMORY;
-		}
-		adf_os_mem_copy(dest, rtap_buf, rtap_len);
-
-		dest = adf_nbuf_put_tail(msdu,
-					 sizeof(struct ieee80211_frame_addr4));
-		if (!dest) {
-			adf_os_print("%s: No buffer for mac header %u\n",
-				     __func__,
-				     (unsigned int)
-				     sizeof(struct ieee80211_frame_addr4));
-			return	A_NO_MEMORY;
-		}
-		adf_os_mem_copy(dest, &mac_array[elem],
-				sizeof(struct ieee80211_frame_addr4));
-
-		adf_nbuf_set_next(msdu, NULL);
-		if (*head_msdu == NULL) {
-			*head_msdu = msdu;
-			*tail_msdu = msdu;
-		} else {
-			adf_nbuf_set_next(*tail_msdu, msdu);
-			*tail_msdu = msdu;
-		}
-	}
-
-	return 0;
-}
-
-int
-htt_rx_offload_msdu_cnt_hl(
-    htt_pdev_handle pdev)
-{
-    return 1;
-}
-
 /* Return values: 1 - success, 0 - failure */
 int
 htt_rx_offload_msdu_pop_hl(
@@ -2224,7 +1857,6 @@ htt_rx_amsdu_rx_in_order_pop_ll(
     struct htt_host_rx_desc_base *rx_desc;
     enum rx_pkt_fate status = RX_PKT_FATE_SUCCESS;
     uint16_t peer_id;
-    struct ol_txrx_peer_t *peer;
 
     HTT_ASSERT1(htt_rx_in_order_ring_elems(pdev) != 0);
 
@@ -2246,11 +1878,6 @@ htt_rx_amsdu_rx_in_order_pop_ll(
         *head_msdu = *tail_msdu = NULL;
         return 0;
     }
-
-    peer = ol_txrx_peer_find_by_id(pdev->txrx_pdev, peer_id);
-    if (!peer)
-        adf_os_print(KERN_DEBUG "%s: invalid peer id %d and msdu count %d\n",
-                     __func__, peer_id, msdu_count);
 
     (*head_msdu) = msdu =
         htt_rx_in_order_netbuf_pop(pdev,
@@ -2307,7 +1934,7 @@ htt_rx_amsdu_rx_in_order_pop_ll(
                     FW_RX_DESC_MIC_ERR_M))
             status = RX_PKT_FATE_FW_DROP_INVALID;
         if (pdev->rx_pkt_dump_cb)
-            pdev->rx_pkt_dump_cb(msdu, peer, status);
+            pdev->rx_pkt_dump_cb(msdu, peer_id, status);
 
         if (adf_os_unlikely((*((u_int8_t *) &rx_desc->fw_desc.u.val)) &
                              FW_RX_DESC_MIC_ERR_M)) {
@@ -2786,10 +2413,6 @@ int (*htt_rx_frag_pop)(
     adf_nbuf_t rx_ind_msg,
     adf_nbuf_t *head_msdu,
     adf_nbuf_t *tail_msdu);
-
-int
-(*htt_rx_offload_msdu_cnt)(
-    htt_pdev_handle pdev);
 
 int
 (*htt_rx_offload_msdu_pop)(
@@ -3299,7 +2922,7 @@ htt_rx_hash_list_insert(struct htt_pdev_t *pdev, u_int32_t paddr,
     htt_list_add_tail(&pdev->rx_ring.hash_table[i]->listhead,
                        &hash_element->listnode);
 
-    RX_HASH_LOG(adf_os_print("rx hash: %s: paddr 0x%x netbuf %pK bucket %d\n",
+    RX_HASH_LOG(adf_os_print("rx hash: %s: paddr 0x%x netbuf %p bucket %d\n",
                              __FUNCTION__, paddr, netbuf,(int)i));
 
     HTT_RX_HASH_COUNT_INCR(pdev->rx_ring.hash_table[i]);
@@ -3356,17 +2979,14 @@ htt_rx_hash_list_lookup(struct htt_pdev_t *pdev, u_int32_t paddr)
         }
     }
 
-    RX_HASH_LOG(adf_os_print("rx hash: %s: paddr 0x%x, netbuf %pK, bucket %d\n",
+    RX_HASH_LOG(adf_os_print("rx hash: %s: paddr 0x%x, netbuf %p, bucket %d\n",
                               __FUNCTION__, paddr, netbuf,(int)i));
     HTT_RX_HASH_COUNT_PRINT(pdev->rx_ring.hash_table[i]);
 
     if (netbuf == NULL) {
         adf_os_print("rx hash: %s: no entry found for 0x%x!!!\n",
                      __FUNCTION__, paddr);
-        if (vos_is_self_recovery_enabled())
-                vos_trigger_recovery(false);
-        else
-                HTT_ASSERT_ALWAYS(0);
+        HTT_ASSERT_ALWAYS(0);
     }
 
     return netbuf;
@@ -3380,7 +3000,7 @@ htt_rx_hash_init(struct htt_pdev_t *pdev)
 {
     int i,j;
 
-    HTT_ASSERT2(ADF_OS_IS_PWR2(RX_NUM_HASH_BUCKETS));
+    HTT_ASSERT2(IS_PWR2(RX_NUM_HASH_BUCKETS));
 
     /* hash table is array of bucket pointers */
     pdev->rx_ring.hash_table = adf_os_mem_alloc(
@@ -3497,7 +3117,7 @@ htt_rx_hash_dump_table(struct htt_pdev_t *pdev)
             hash_entry =
                  (struct htt_rx_hash_entry *)((char *)list_iter -
                                                pdev->rx_ring.listnode_offset);
-            adf_os_print("hash_table[%d]: netbuf %pK paddr 0x%x\n",
+            adf_os_print("hash_table[%d]: netbuf %p paddr 0x%x\n",
                           i, hash_entry->netbuf, hash_entry->paddr);
         }
     }
@@ -3514,7 +3134,7 @@ htt_rx_attach(struct htt_pdev_t *pdev)
     adf_os_dma_addr_t paddr;
     if (!pdev->cfg.is_high_latency) {
         pdev->rx_ring.size = htt_rx_ring_size(pdev);
-        HTT_ASSERT2(ADF_OS_IS_PWR2(pdev->rx_ring.size));
+        HTT_ASSERT2(IS_PWR2(pdev->rx_ring.size));
         pdev->rx_ring.size_mask = pdev->rx_ring.size - 1;
 
         /*
@@ -3622,7 +3242,6 @@ htt_rx_attach(struct htt_pdev_t *pdev)
         if (VOS_MONITOR_MODE == vos_get_conparam())
             htt_rx_amsdu_pop = htt_rx_mon_amsdu_rx_in_order_pop_ll;
 
-        htt_rx_offload_msdu_cnt = htt_rx_offload_msdu_cnt_ll;
         htt_rx_offload_msdu_pop = htt_rx_offload_msdu_pop_ll;
         htt_rx_mpdu_desc_retry = htt_rx_mpdu_desc_retry_ll;
         htt_rx_mpdu_desc_seq_num = htt_rx_mpdu_desc_seq_num_ll;
@@ -3640,16 +3259,13 @@ htt_rx_attach(struct htt_pdev_t *pdev)
         htt_rx_msdu_center_freq = htt_rx_msdu_center_freq_ll;
     } else {
         pdev->rx_ring.size = HTT_RX_RING_SIZE_MIN;
-        HTT_ASSERT2(ADF_OS_IS_PWR2(pdev->rx_ring.size));
+        HTT_ASSERT2(IS_PWR2(pdev->rx_ring.size));
         pdev->rx_ring.size_mask = pdev->rx_ring.size - 1;
 
         /* host can force ring base address if it wish to do so */
         pdev->rx_ring.base_paddr = 0;
         htt_rx_amsdu_pop = htt_rx_amsdu_pop_hl;
-        if (VOS_MONITOR_MODE == vos_get_conparam())
-            htt_rx_amsdu_pop = htt_rx_mon_amsdu_pop_hl;
         htt_rx_frag_pop = htt_rx_frag_pop_hl;
-        htt_rx_offload_msdu_cnt = htt_rx_offload_msdu_cnt_hl;
         htt_rx_offload_msdu_pop = htt_rx_offload_msdu_pop_hl;
         htt_rx_mpdu_desc_list_next = htt_rx_mpdu_desc_list_next_hl;
         htt_rx_mpdu_desc_retry = htt_rx_mpdu_desc_retry_hl;

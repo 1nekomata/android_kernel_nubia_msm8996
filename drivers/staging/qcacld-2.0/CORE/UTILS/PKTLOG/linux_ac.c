@@ -136,13 +136,13 @@ int pktlog_alloc_buf(struct ol_softc *scn)
 
 	page_cnt = (sizeof(*(pl_info->buf)) + pl_info->buf_size) / PAGE_SIZE;
 
-	adf_os_spin_lock_bh(&pl_info->log_lock);
+	spin_lock_bh(&pl_info->log_lock);
 	if(pl_info->buf != NULL) {
 		printk("Buffer is already in use\n");
-		adf_os_spin_unlock_bh(&pl_info->log_lock);
+		spin_unlock_bh(&pl_info->log_lock);
 		return -EINVAL;
 	}
-	adf_os_spin_unlock_bh(&pl_info->log_lock);
+	spin_unlock_bh(&pl_info->log_lock);
 
 	if ((buffer = vmalloc((page_cnt + 2) * PAGE_SIZE)) == NULL) {
 		printk(PKTLOG_TAG
@@ -167,12 +167,12 @@ int pktlog_alloc_buf(struct ol_softc *scn)
 		SetPageReserved(vpg);
 	}
 
-	adf_os_spin_lock_bh(&pl_info->log_lock);
+	spin_lock_bh(&pl_info->log_lock);
 	if(pl_info->buf != NULL)
 		pktlog_release_buf(scn);
 
 	pl_info->buf =  buffer;
-	adf_os_spin_unlock_bh(&pl_info->log_lock);
+	spin_unlock_bh(&pl_info->log_lock);
 	return 0;
 }
 
@@ -465,7 +465,7 @@ static int pktlog_attach(struct ol_softc *scn)
 	pl_dev = get_pl_handle(scn);
 
 	if (pl_dev != NULL) {
-		pl_info_lnx = vos_mem_malloc(sizeof(*pl_info_lnx));
+		pl_info_lnx = kmalloc(sizeof(*pl_info_lnx), GFP_KERNEL);
 		if (pl_info_lnx == NULL) {
 			printk(PKTLOG_TAG "%s:allocation failed for pl_info\n",
 			       __func__);
@@ -535,7 +535,7 @@ attach_fail2:
 
 attach_fail1:
 	if (pl_dev)
-		vos_mem_free(pl_dev->pl_info);
+		kfree(pl_dev->pl_info);
 	return -1;
 }
 
@@ -574,14 +574,14 @@ static void pktlog_detach(struct ol_softc *scn)
 	remove_proc_entry(WLANDEV_BASENAME, g_pktlog_pde);
 	pktlog_sysctl_unregister(pl_dev);
 
-	adf_os_spin_lock_bh(&pl_info->log_lock);
+	spin_lock_bh(&pl_info->log_lock);
 	if (pl_info->buf)
 		pktlog_release_buf(scn);
-	adf_os_spin_unlock_bh(&pl_info->log_lock);
+	spin_unlock_bh(&pl_info->log_lock);
 	pktlog_cleanup(pl_info);
 
 	if (pl_dev) {
-		vos_mem_free(pl_info);
+		kfree(pl_info);
 		pl_dev->pl_info = NULL;
 	}
 }
@@ -630,14 +630,14 @@ pktlog_read_proc_entry(char *buf, size_t nbytes, loff_t *ppos,
 	int fold_offset, ppos_data, cur_rd_offset, cur_wr_offset;
 	struct ath_pktlog_buf *log_buf;
 
-	adf_os_spin_lock_bh(&pl_info->log_lock);
+	spin_lock_bh(&pl_info->log_lock);
 	log_buf = pl_info->buf;
 
 	*read_complete = false;
 
 	if (log_buf == NULL) {
 		*read_complete = true;
-		adf_os_spin_unlock_bh(&pl_info->log_lock);
+		spin_unlock_bh(&pl_info->log_lock);
 		return 0;
 	}
 
@@ -754,7 +754,7 @@ rd_done:
 			*read_complete = true;
 		}
 	}
-	adf_os_spin_unlock_bh(&pl_info->log_lock);
+	spin_unlock_bh(&pl_info->log_lock);
 	return ret_val;
 }
 
@@ -776,11 +776,11 @@ __pktlog_read(struct file *file, char *buf, size_t nbytes, loff_t *ppos)
 #endif
 	struct ath_pktlog_buf *log_buf;
 
-	adf_os_spin_lock_bh(&pl_info->log_lock);
+	spin_lock_bh(&pl_info->log_lock);
 	log_buf = pl_info->buf;
 
 	if (log_buf == NULL) {
-		adf_os_spin_unlock_bh(&pl_info->log_lock);
+		spin_unlock_bh(&pl_info->log_lock);
 		return 0;
 	}
 
@@ -797,13 +797,13 @@ __pktlog_read(struct file *file, char *buf, size_t nbytes, loff_t *ppos)
 
 	if (*ppos < bufhdr_size) {
 		count = MIN((bufhdr_size - *ppos), rem_len);
-		adf_os_spin_unlock_bh(&pl_info->log_lock);
+		spin_unlock_bh(&pl_info->log_lock);
 		if (copy_to_user(buf, ((char *)&log_buf->bufhdr) + *ppos,
 				 count))
 			return -EFAULT;
 		rem_len -= count;
 		ret_val += count;
-		adf_os_spin_lock_bh(&pl_info->log_lock);
+		spin_lock_bh(&pl_info->log_lock);
 	}
 
 	start_offset = log_buf->rd_offset;
@@ -845,25 +845,25 @@ __pktlog_read(struct file *file, char *buf, size_t nbytes, loff_t *ppos)
 			goto rd_done;
 
 		count = MIN(rem_len, (end_offset - ppos_data + 1));
-		adf_os_spin_unlock_bh(&pl_info->log_lock);
+		spin_unlock_bh(&pl_info->log_lock);
 		if (copy_to_user(buf + ret_val,
 				 log_buf->log_data + ppos_data,
 				 count))
 			return -EFAULT;
 		ret_val += count;
 		rem_len -= count;
-		adf_os_spin_lock_bh(&pl_info->log_lock);
+		spin_lock_bh(&pl_info->log_lock);
 	} else {
 		if (ppos_data <= fold_offset) {
 			count = MIN(rem_len, (fold_offset - ppos_data + 1));
-			adf_os_spin_unlock_bh(&pl_info->log_lock);
+			spin_unlock_bh(&pl_info->log_lock);
 			if (copy_to_user(buf + ret_val,
 					 log_buf->log_data + ppos_data,
 					 count))
 				return -EFAULT;
 			ret_val += count;
 			rem_len -= count;
-			adf_os_spin_lock_bh(&pl_info->log_lock);
+			spin_lock_bh(&pl_info->log_lock);
 		}
 
 		if (rem_len == 0)
@@ -875,14 +875,14 @@ __pktlog_read(struct file *file, char *buf, size_t nbytes, loff_t *ppos)
 
 		if (ppos_data <= end_offset) {
 			count = MIN(rem_len, (end_offset - ppos_data + 1));
-			adf_os_spin_unlock_bh(&pl_info->log_lock);
+			spin_unlock_bh(&pl_info->log_lock);
 			if (copy_to_user(buf + ret_val,
 					 log_buf->log_data + ppos_data,
 					 count))
 				return -EFAULT;
 			ret_val += count;
 			rem_len -= count;
-			adf_os_spin_lock_bh(&pl_info->log_lock);
+			spin_lock_bh(&pl_info->log_lock);
 		}
 	}
 
@@ -893,7 +893,7 @@ rd_done:
 	}
 	*ppos += ret_val;
 
-	adf_os_spin_unlock_bh(&pl_info->log_lock);
+	spin_unlock_bh(&pl_info->log_lock);
 	return ret_val;
 }
 

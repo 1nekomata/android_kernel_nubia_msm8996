@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -1167,14 +1167,14 @@ static void oem_cmd_handler(const void *data, int data_len, void *ctx, int pid)
 
 	msg_len = nla_len(tb[CLD80211_ATTR_DATA]);
 	if (msg_len < sizeof(*msg_hdr)) {
-		hdd_err("runt ATTR_DATA size %d", msg_len);
+		hddLog(LOGE, FL("runt ATTR_DATA size %d"), msg_len);
 		send_oem_err_rsp_nlink_msg(pid, OEM_ERR_NULL_MESSAGE_HEADER);
 		return;
 	}
 
 	msg_hdr = nla_data(tb[CLD80211_ATTR_DATA]);
 	if (msg_len < (sizeof(*msg_hdr) + msg_hdr->length)) {
-		hdd_err("Invalid nl msg len %d, msg hdr len %d",
+		hddLog(LOGE, FL("Invalid nl msg len %d, msg hdr len %d"),
 			msg_len, msg_hdr->length);
 		send_oem_err_rsp_nlink_msg(pid, OEM_ERR_INVALID_MESSAGE_LENGTH);
 		return;
@@ -1283,22 +1283,5 @@ int oem_activate_service(void *hdd_ctx)
    nl_srv_register(WLAN_NL_MSG_OEM, __oem_msg_callback);
    return 0;
 }
-
-/**---------------------------------------------------------------------------
-
-  \brief oem_deactivate_service() - Deactivate oem message handler
-
-  This function unregisters a handler to receive netlink message from
-  an OEM application process.
-
-  \return - none
-  --------------------------------------------------------------------------*/
-void oem_deactivate_service()
-{
-   /* unregister the msg handler for msgs addressed to WLAN_NL_MSG_OEM */
-   nl_srv_unregister(WLAN_NL_MSG_OEM, __oem_msg_callback);
-}
-
-
 #endif
 #endif

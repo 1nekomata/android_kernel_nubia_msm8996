@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -46,7 +46,7 @@
 #include "vos_timer.h"
 
 /* Static and Global variables */
-static adf_os_spinlock_t l_dp_trace_lock;
+static spinlock_t l_dp_trace_lock;
 
 static struct adf_dp_trace_record_s
 			g_adf_dp_trace_tbl[MAX_ADF_DP_TRACE_RECORDS];
@@ -72,7 +72,7 @@ void adf_dp_trace_init(void)
 {
 	uint8_t i;
 
-	adf_os_spinlock_init(&l_dp_trace_lock);
+	spin_lock_init(&l_dp_trace_lock);
 	g_adf_dp_trace_data.head = INVALID_ADF_DP_TRACE_ADDR;
 	g_adf_dp_trace_data.tail = INVALID_ADF_DP_TRACE_ADDR;
 	g_adf_dp_trace_data.num = 0;
@@ -114,11 +114,11 @@ void adf_dp_trace_init(void)
 void adf_dp_trace_set_value(uint8_t proto_bitmap, uint8_t no_of_record,
 			 uint8_t verbosity)
 {
-	adf_os_spin_lock_bh(&l_dp_trace_lock);
+	spin_lock_bh(&l_dp_trace_lock);
 	g_adf_dp_trace_data.proto_bitmap = proto_bitmap;
 	g_adf_dp_trace_data.no_of_record = no_of_record;
 	g_adf_dp_trace_data.verbosity    = verbosity;
-	adf_os_spin_unlock_bh(&l_dp_trace_lock);
+	spin_unlock_bh(&l_dp_trace_lock);
 }
 
 /**
@@ -173,7 +173,7 @@ void adf_dp_trace_set_track(adf_nbuf_t nbuf,  enum adf_proto_dir dir)
 {
 	uint32_t count = 0;
 
-	adf_os_spin_lock_bh(&l_dp_trace_lock);
+	spin_lock_bh(&l_dp_trace_lock);
 	if (ADF_TX == dir)
 		count = ++g_adf_dp_trace_data.tx_count;
 	else if (ADF_RX == dir)
@@ -186,7 +186,7 @@ void adf_dp_trace_set_track(adf_nbuf_t nbuf,  enum adf_proto_dir dir)
 		else if (ADF_RX == dir)
 			ADF_NBUF_CB_RX_DP_TRACE(nbuf) = 1;
 	}
-	adf_os_spin_unlock_bh(&l_dp_trace_lock);
+	spin_unlock_bh(&l_dp_trace_lock);
 }
 
 #define DPTRACE_PRINT(args...) \
@@ -415,7 +415,7 @@ void adf_dp_add_record(enum ADF_DP_TRACE_ID code,
 	struct adf_dp_trace_record_s *rec = NULL;
 	int index;
 
-	adf_os_spin_lock_bh(&l_dp_trace_lock);
+	spin_lock_bh(&l_dp_trace_lock);
 
 	g_adf_dp_trace_data.num++;
 
@@ -456,10 +456,9 @@ void adf_dp_add_record(enum ADF_DP_TRACE_ID code,
 	vos_get_time_of_the_day_in_hr_min_sec_usec(rec->time,
 					sizeof(rec->time));
 	rec->pid = (in_interrupt() ? 0 : current->pid);
-	adf_os_spin_unlock_bh(&l_dp_trace_lock);
+	spin_unlock_bh(&l_dp_trace_lock);
 
-	if ((g_adf_dp_trace_data.live_mode || print == true) &&
-	    (rec->code < ADF_DP_TRACE_MAX))
+	if (g_adf_dp_trace_data.live_mode || print == true)
 		adf_dp_trace_cb_table[rec->code] (rec, index);
 }
 
@@ -774,10 +773,6 @@ void adf_dp_trace_ptr(adf_nbuf_t nbuf, enum ADF_DP_TRACE_ID code,
 void adf_dp_display_record(struct adf_dp_trace_record_s *pRecord,
 				uint16_t recIndex)
 {
-	uint8_t rsize = pRecord->size;
-	if (rsize > ADF_DP_TRACE_RECORD_SIZE)
-		rsize = ADF_DP_TRACE_RECORD_SIZE;
-
 	DPTRACE_PRINT("DPT: %04d: %s: %s\n", recIndex,
 		pRecord->time, adf_dp_code_to_string(pRecord->code));
 	switch (pRecord->code) {
@@ -789,10 +784,10 @@ void adf_dp_display_record(struct adf_dp_trace_record_s *pRecord,
 		break;
 	case ADF_DP_TRACE_HDD_TX_PACKET_RECORD:
 	case ADF_DP_TRACE_HDD_RX_PACKET_RECORD:
-		dump_hex_trace("DATA", pRecord->data, rsize);
+		dump_hex_trace("DATA", pRecord->data, pRecord->size);
 		break;
 	default:
-		dump_hex_trace("cookie", pRecord->data, rsize);
+		dump_hex_trace("cookie", pRecord->data, pRecord->size);
 	}
 }
 
@@ -813,7 +808,7 @@ void adf_dp_trace(adf_nbuf_t nbuf, enum ADF_DP_TRACE_ID code,
 		return;
 
 	adf_dp_add_record(code, data, size,
-			nbuf ? ADF_NBUF_CB_DP_TRACE_PRINT(nbuf) : false);
+				ADF_NBUF_CB_DP_TRACE_PRINT(nbuf));
 }
 
 /**
@@ -874,7 +869,7 @@ void adf_dp_trace_dump_all(uint32_t count)
 	/* aquire the lock so that only one thread at a time can read
 	 * the ring buffer
 	 */
-	adf_os_spin_lock_bh(&l_dp_trace_lock);
+	spin_lock_bh(&l_dp_trace_lock);
 
 	if (g_adf_dp_trace_data.head != INVALID_ADF_DP_TRACE_ADDR) {
 		i = g_adf_dp_trace_data.head;
@@ -891,7 +886,7 @@ void adf_dp_trace_dump_all(uint32_t count)
 		}
 
 		pRecord = g_adf_dp_trace_tbl[i];
-		adf_os_spin_unlock_bh(&l_dp_trace_lock);
+		spin_unlock_bh(&l_dp_trace_lock);
 		for (;; ) {
 			adf_dp_trace_cb_table[pRecord.
 					   code] (&pRecord, (uint16_t)i);
@@ -899,14 +894,14 @@ void adf_dp_trace_dump_all(uint32_t count)
 				break;
 			i += 1;
 
-			adf_os_spin_lock_bh(&l_dp_trace_lock);
+			spin_lock_bh(&l_dp_trace_lock);
 			if (MAX_ADF_DP_TRACE_RECORDS == i)
 				i = 0;
 
 			pRecord = g_adf_dp_trace_tbl[i];
-			adf_os_spin_unlock_bh(&l_dp_trace_lock);
+			spin_unlock_bh(&l_dp_trace_lock);
 		}
 	} else {
-		adf_os_spin_unlock_bh(&l_dp_trace_lock);
+		spin_unlock_bh(&l_dp_trace_lock);
 	}
 }

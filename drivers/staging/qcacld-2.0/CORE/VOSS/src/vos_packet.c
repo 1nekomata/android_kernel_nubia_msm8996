@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014, 2016, 2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -74,8 +74,7 @@ typedef struct
 
 vos_pkt_proto_trace_t   *trace_buffer = NULL;
 unsigned int            trace_buffer_order = 0;
-unsigned int trace_dump_order = 0;
-adf_os_spinlock_t              trace_buffer_lock;
+spinlock_t              trace_buffer_lock;
 #endif /* QCA_PKT_PROTO_TRACE */
 
 /**
@@ -342,11 +341,11 @@ void vos_pkt_trace_buf_update
       return;
    }
 
-   adf_os_spin_lock_bh(&trace_buffer_lock);
+   spin_lock_bh(&trace_buffer_lock);
    slot = trace_buffer_order % VOS_PKT_TRAC_MAX_TRACE_BUF;
    trace_buffer[slot].order = trace_buffer_order;
    trace_buffer_order++;
-   adf_os_spin_unlock_bh(&trace_buffer_lock);
+   spin_unlock_bh(&trace_buffer_lock);
    do_gettimeofday(&tv);
    trace_buffer[slot].event_sec_time = tv.tv_sec;
    trace_buffer[slot].event_msec_time = tv.tv_usec;
@@ -357,12 +356,12 @@ void vos_pkt_trace_buf_update
 }
 
 /**
- * vos_pkt_trace_dump_slot_buf() - Helper function to dump pkt trace
+ * vos_pkt_trace_buf_dump_1() - Helper function to dump pkt trace
  * @slot: index
  *
  * Return: none
  */
-void vos_pkt_trace_dump_slot_buf(int slot)
+void vos_pkt_trace_buf_dump_1(int slot)
 {
 	struct rtc_time tm;
 	unsigned long local_time;
@@ -403,23 +402,20 @@ void vos_pkt_trace_buf_dump(void)
 		 * Scenario: Number of trace records less than MAX,
 		 * Circular buffer not overwritten.
 		 */
-		for (slot = latest_idx - 1; slot >= 0 &&
-		     slot > trace_dump_order; slot--)
-			vos_pkt_trace_dump_slot_buf(slot);
+		for (slot = latest_idx - 1; slot >= 0; slot--)
+			vos_pkt_trace_buf_dump_1(slot);
 	} else {
 		/*
 		 * Scenario: Number of trace records exceeded MAX,
 		 * Circular buffer is overwritten.
 		 */
-		for (i = 0; (i < VOS_PKT_TRAC_MAX_TRACE_BUF) &&
-		     (latest_idx - i - 1 > trace_dump_order); i++) {
+		for (i = 0; i < VOS_PKT_TRAC_MAX_TRACE_BUF; i++) {
 			slot = ((latest_idx - i - 1) %
 				VOS_PKT_TRAC_MAX_TRACE_BUF);
-			vos_pkt_trace_dump_slot_buf(slot);
+			vos_pkt_trace_buf_dump_1(slot);
 		}
 	}
 
-	trace_dump_order = latest_idx - 1;
 	VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
 			"PACKET TRACE DUMP END");
 
@@ -436,7 +432,7 @@ void vos_pkt_proto_trace_init
 )
 {
    /* Init spin lock to protect global memory */
-   adf_os_spinlock_init(&trace_buffer_lock);
+   spin_lock_init(&trace_buffer_lock);
    trace_buffer_order = 0;
    trace_buffer = vos_mem_malloc(
        VOS_PKT_TRAC_MAX_TRACE_BUF * sizeof(vos_pkt_proto_trace_t));
@@ -462,10 +458,10 @@ void vos_pkt_proto_trace_close
 {
    VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
              "%s %d", __func__, __LINE__);
-   adf_os_spin_lock_bh(&trace_buffer_lock);
+   spin_lock_bh(&trace_buffer_lock);
    vos_mem_free(trace_buffer);
    trace_buffer = NULL;
-   adf_os_spin_unlock_bh(&trace_buffer_lock);
+   spin_unlock_bh(&trace_buffer_lock);
 
    return;
 }

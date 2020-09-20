@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016, 2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2015 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -78,8 +78,7 @@ enum
     eLIM_PERIODIC_JOIN_PROBE_REQ_TIMER,
     eLIM_INSERT_SINGLESHOT_NOA_TIMER,
     eLIM_CONVERT_ACTIVE_CHANNEL_TO_PASSIVE,
-    eLIM_AUTH_RETRY_TIMER,
-    eLIM_AUTH_SAE_TIMER
+    eLIM_AUTH_RETRY_TIMER
 };
 
 #define LIM_DISASSOC_DEAUTH_ACK_TIMEOUT         500
@@ -97,6 +96,7 @@ void limDeactivateAndChangeTimer(tpAniSirGlobal, tANI_U32);
 void limHeartBeatDeactivateAndChangeTimer(tpAniSirGlobal, tpPESession);
 void limReactivateHeartBeatTimer(tpAniSirGlobal, tpPESession);
 void limDummyPktExpTimerHandler(void *, tANI_U32);
+void limSendDisassocFrameThresholdHandler(void *, tANI_U32);
 void limCnfWaitTmerHandler(void *, tANI_U32);
 void limKeepaliveTmerHandler(void *, tANI_U32);
 void limDeactivateAndChangePerStaIdTimer(tpAniSirGlobal, tANI_U32, tANI_U16);

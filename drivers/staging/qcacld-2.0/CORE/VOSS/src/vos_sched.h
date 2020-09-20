@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016, 2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2016 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -72,23 +72,22 @@
 #include <adf_os_types.h>
 #include <vos_lock.h>
 #include <vos_timer.h>
-#include <adf_os_lock.h>
 
-#define TX_POST_EVENT               0x000
-#define TX_SUSPEND_EVENT            0x001
-#define MC_POST_EVENT               0x000
-#define MC_SUSPEND_EVENT            0x001
-#define RX_POST_EVENT               0x000
-#define RX_SUSPEND_EVENT            0x001
-#define TX_SHUTDOWN_EVENT           0x002
-#define MC_SHUTDOWN_EVENT           0x002
-#define RX_SHUTDOWN_EVENT           0x002
-#define WD_POST_EVENT               0x000
-#define WD_SHUTDOWN_EVENT           0x001
-#define WD_CHIP_RESET_EVENT         0x002
-#define WD_WLAN_SHUTDOWN_EVENT      0x003
-#define WD_WLAN_REINIT_EVENT        0x004
-#define WD_WLAN_DETECT_THREAD_STUCK 0x005
+#define TX_POST_EVENT_MASK               0x001
+#define TX_SUSPEND_EVENT_MASK            0x002
+#define MC_POST_EVENT_MASK               0x001
+#define MC_SUSPEND_EVENT_MASK            0x002
+#define RX_POST_EVENT_MASK               0x001
+#define RX_SUSPEND_EVENT_MASK            0x002
+#define TX_SHUTDOWN_EVENT_MASK           0x010
+#define MC_SHUTDOWN_EVENT_MASK           0x010
+#define RX_SHUTDOWN_EVENT_MASK           0x010
+#define WD_POST_EVENT_MASK               0x001
+#define WD_SHUTDOWN_EVENT_MASK           0x002
+#define WD_CHIP_RESET_EVENT_MASK         0x004
+#define WD_WLAN_SHUTDOWN_EVENT_MASK      0x008
+#define WD_WLAN_REINIT_EVENT_MASK        0x010
+#define WD_WLAN_DETECT_THREAD_STUCK_MASK 0x020
 
 
 
@@ -120,7 +119,7 @@ typedef void (*vos_tlshim_cb) (void *context, void *rxpkt, u_int16_t staid);
 typedef struct _VosMqType
 {
   /* Lock use to synchronize access to this message queue */
-  adf_os_spinlock_t       mqLock;
+  spinlock_t       mqLock;
 
   /* List of vOS Messages waiting on this queue */
   struct list_head  mqList;
@@ -197,9 +196,9 @@ typedef struct _VosSchedContext
    struct completion ResumeMcEvent;
 
    /* lock to make sure that McThread and TxThread Suspend/resume mechanism is in sync*/
-   adf_os_spinlock_t McThreadLock;
+   spinlock_t McThreadLock;
 #ifdef QCA_CONFIG_SMP
-   adf_os_spinlock_t TlshimRxThreadLock;
+   spinlock_t TlshimRxThreadLock;
 
    /* Tlshim Rx thread handle */
    struct task_struct *TlshimRxThread;
@@ -225,21 +224,20 @@ typedef struct _VosSchedContext
    struct list_head tlshimRxQueue;
 
    /* Spinlock to synchronize between tasklet and thread */
-   adf_os_spinlock_t TlshimRxQLock;
+   spinlock_t TlshimRxQLock;
 
    /* Rx queue length */
    unsigned int TlshimRxQlen;
 
    /* Lock to synchronize free buffer queue access */
-   adf_os_spinlock_t VosTlshimPktFreeQLock;
+   spinlock_t VosTlshimPktFreeQLock;
 
    /* Free message queue for Tlshim Rx processing */
    struct list_head VosTlshimPktFreeQ;
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0))
    /* cpu hotplug notifier */
    struct notifier_block *cpuHotPlugNotifier;
-#endif
+
    /* affinity lock */
    vos_lock_t affinity_lock;
 
@@ -283,13 +281,13 @@ typedef struct _VosWatchdogContext
    v_BOOL_t resetInProgress;
 
    /* Lock for preventing multiple reset being triggered simultaneously */
-   adf_os_spinlock_t wdLock;
+   spinlock_t wdLock;
    /* Timer to detect thread stuck issue */
    vos_timer_t thread_stuck_timer;
    /* Count to determine thread stuck */
    unsigned int mc_thread_stuck_count;
    /* lock to synchronize access to the thread stuck counts */
-   adf_os_spinlock_t thread_stuck_lock;
+   spinlock_t thread_stuck_lock;
 
 } VosWatchdogContext, *pVosWatchdogContext;
 
@@ -324,20 +322,6 @@ struct vos_log_complete {
 	bool is_report_in_progress;
 };
 
-/**
- * struct vos_wdthread_timer_work - Watchdog timer thread structure
- * @callback: Watchdog timer work call back
- * @userdata: Input to the timer call back function
- * @node: wdthread timer work Linklist
- *
- * This structure internally stores wdthread timer work related params
- */
-struct vos_wdthread_timer_work {
-	vos_timer_callback_t callback;
-	void *userdata;
-	struct list_head node;
-};
-
 typedef struct _VosContextType
 {
    /* Messages buffers */
@@ -362,6 +346,11 @@ typedef struct _VosContextType
 
    /* MAC Module Context  */
    v_VOID_t           *pMACContext;
+
+#ifndef WLAN_FEATURE_MBSSID
+   /* SAP Context */
+   v_VOID_t           *pSAPContext;
+#endif
 
    vos_event_t         ProbeEvent;
 
@@ -391,7 +380,6 @@ typedef struct _VosContextType
    volatile v_U8_t    isLoadUnloadInProgress;
    volatile v_U8_t    is_load_in_progress;
    volatile v_U8_t    is_unload_in_progress;
-   volatile v_U8_t    is_ssr_failed;
 
    /* SSR re-init in progress */
    volatile v_U8_t     isReInitInProgress;
@@ -411,14 +399,6 @@ typedef struct _VosContextType
 
    bool crash_indication_pending;
    bool enable_fatal_event;
-
-   /* radio index per driver */
-   int radio_index;
-   struct vos_wdthread_timer_work wdthread_timer_work;
-   struct list_head wdthread_timer_work_list;
-   struct work_struct wdthread_work;
-   adf_os_spinlock_t wdthread_work_lock;
-   bool is_closed;
 } VosContextType, *pVosContextType;
 
 
@@ -662,7 +642,6 @@ int vos_get_gfp_flags(void);
 void vos_wd_reset_thread_stuck_count(int thread_id);
 bool vos_is_wd_thread(int thread_id);
 int vos_sched_is_mc_thread(int thread_id);
-void vos_thread_stuck_timer_init(pVosWatchdogContext wd_ctx);
 
 #define vos_wait_for_work_thread_completion(func) vos_is_ssr_ready(func)
 

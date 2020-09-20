@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -66,7 +66,6 @@ enum wlan_op_mode {
 #define OL_TXQ_PAUSE_REASON_VDEV_SUSPEND      (1 << 4)
 #define OL_TXQ_PAUSE_REASON_MCC_VDEV_START    (1 << 5)
 #define OL_TXQ_PAUSE_REASON_THROTTLE          (1 << 6)
-#define OL_TXQ_PAUSE_REASON_CRASH_DUMP        (1 << 7)
 
 /**
  * enum netif_action_type - Type of actions on netif queues
@@ -248,12 +247,12 @@ ol_txrx_peer_update(ol_txrx_vdev_handle data_vdev, u_int8_t *peer_mac,
 		    ol_txrx_peer_update_select_t select);
 
 enum {
-	OL_TX_WMM_AC_BE,
-	OL_TX_WMM_AC_BK,
-	OL_TX_WMM_AC_VI,
-	OL_TX_WMM_AC_VO,
+    OL_TX_WMM_AC_BE,
+    OL_TX_WMM_AC_BK,
+    OL_TX_WMM_AC_VI,
+    OL_TX_WMM_AC_VO,
 
-	OL_TX_NUM_WMM_AC
+    OL_TX_NUM_WMM_AC
 };
 
 /**
@@ -511,63 +510,8 @@ ol_txrx_pdev_unpause(ol_txrx_pdev_handle data_pdev, u_int32_t reason);
 #if defined(CONFIG_HL_SUPPORT)
 void
 ol_txrx_pdev_pause_other_vdev(ol_txrx_pdev_handle data_pdev, u_int32_t reason, u_int32_t current_id);
-
-/**
- * ol_tx_queue_flush() - Flush pending frames in the tx queues which are not
- *                       queued in the TX scheduler.
- * @pdev: the physical device being flushed.
- *
- * Return: None
- */
-void
-ol_tx_queue_flush(struct ol_txrx_pdev_t *pdev);
-
-/**
- * ol_txrx_vdev_unpause_txq() - Unpause OL_TX_NUM_TIDS/OL_TXRX_NUM_EXT_TIDS
- * @vdev: the device being unpaused.
- * @reason:  unpause reason.
- *
- * Return: None
- */
-void
-ol_txrx_vdev_unpause_txq(ol_txrx_vdev_handle vdev, u_int32_t reason);
-
-/**
- * ol_txrx_pdev_unpause_vdev_txq() - Unpause OL_TX_NUM_TIDS/OL_TXRX_NUM_EXT_TIDS
- * @data_pdev: the physical device being unpaused.
- * @reason:  unpause reason.
- *
- * Return: None
- */
-void
-ol_txrx_pdev_unpause_vdev_txq(ol_txrx_pdev_handle pdev, u_int32_t reason);
-
-/**
- * ol_txrx_vdev_pause_txq() - Suspend OL_TX_NUM_TIDS/OL_TXRX_NUM_EXT_TIDS
- * @vdev: the device being paused.
- * @reason:  pause reason.
- *
- * Return: None
- */
-void
-ol_txrx_vdev_pause_txq(ol_txrx_vdev_handle vdev, u_int32_t reason);
-
-/**
- * ol_txrx_pdev_pause_vdev_txq() - Suspend OL_TX_NUM_TIDS/OL_TXRX_NUM_EXT_TIDS
- * @data_pdev: the physical device being paused.
- * @reason:  pause reason.
- *
- * Return: None
- */
-void
-ol_txrx_pdev_pause_vdev_txq(ol_txrx_pdev_handle pdev, u_int32_t reason);
 #else
 #define ol_txrx_pdev_pause_other_vdev(data_pdev,reason,current_id) /* no-op */
-#define ol_tx_queue_flush(pdev) /* no-op */
-#define ol_txrx_pdev_unpause_vdev_txq(data_pdev,reason) /* no-op */
-#define ol_txrx_vdev_unpause_txq(data_pdev,reason) /* no-op */
-#define ol_txrx_pdev_pause_vdev_txq(data_pdev,reason) /* no-op */
-#define ol_txrx_vdev_pause_txq(data_pdev,reason) /* no-op */
 #endif /* CONFIG_HL_SUPPORT */
 
 /**
@@ -835,6 +779,8 @@ A_STATUS
 ol_txrx_get_queue_status(
 	ol_txrx_pdev_handle pdev);
 
+void ol_txrx_dump_tx_queue_stats(ol_txrx_pdev_handle pdev_handle);
+
 void ol_txrx_dump_tx_desc(ol_txrx_pdev_handle pdev);
 
 /**
@@ -1023,30 +969,6 @@ ol_txrx_peer_stats_copy(
 #define ol_txrx_peer_stats_copy(pdev, peer, stats) A_ERROR /* failure */
 #endif /* QCA_ENABLE_OL_TXRX_PEER_STATS */
 
-/**
- * struct ol_tx_sched_wrr_ac_specs_t - the wrr ac specs params structure
- * @wrr_skip_weight: map to ol_tx_sched_wrr_adv_category_info_t.specs.
- *                            wrr_skip_weight
- * @credit_threshold: map to ol_tx_sched_wrr_adv_category_info_t.specs.
- *                            credit_threshold
- * @send_limit: map to ol_tx_sched_wrr_adv_category_info_t.specs.
- *                            send_limit
- * @credit_reserve: map to ol_tx_sched_wrr_adv_category_info_t.specs.
- *                            credit_reserve
- * @discard_weight: map to ol_tx_sched_wrr_adv_category_info_t.specs.
- *                            discard_weight
- *
- * This structure is for wrr ac specs params set from user, it will update
- * its content corresponding to the ol_tx_sched_wrr_adv_category_info_t.specs.
- */
-struct ol_tx_sched_wrr_ac_specs_t {
-	int wrr_skip_weight;
-	uint32_t credit_threshold;
-	uint16_t send_limit;
-	int credit_reserve;
-	int discard_weight;
-};
-
 /* Config parameters for txrx_pdev */
 struct txrx_pdev_cfg_param_t {
     u_int8_t is_full_reorder_offload;
@@ -1062,18 +984,6 @@ struct txrx_pdev_cfg_param_t {
     u_int32_t uc_tx_partition_base;
     uint16_t pkt_bundle_timer_value;
     uint16_t pkt_bundle_size;
-
-#ifdef QCA_SUPPORT_TXRX_DRIVER_TCP_DEL_ACK
-    uint8_t  del_ack_enable;
-    uint16_t del_ack_timer_value;
-    uint16_t del_ack_pkt_count;
-#endif
-
-    /*  PTP feature enabled\disable status */
-#ifdef WLAN_FEATURE_TSF_PLUS
-    a_bool_t is_ptp_enabled;
-#endif
-    struct ol_tx_sched_wrr_ac_specs_t ac_specs[OL_TX_NUM_WMM_AC];
 };
 
 /**
@@ -1541,9 +1451,6 @@ bool ol_txrx_set_ocb_def_tx_param(ol_txrx_vdev_handle vdev,
 
 void ol_txrx_display_stats(struct ol_txrx_pdev_t *pdev, uint16_t bitmap);
 void ol_txrx_clear_stats(struct ol_txrx_pdev_t *pdev, uint16_t bitmap);
-
-void ol_txrx_get_stats(struct ol_txrx_pdev_t *pdev, uint16_t value,
-		       void *data_ptr);
 
 void ol_rx_reset_pn_replay_counter(struct ol_txrx_pdev_t *pdev);
 uint32_t ol_rx_get_tkip_replay_counter(struct ol_txrx_pdev_t *pdev);

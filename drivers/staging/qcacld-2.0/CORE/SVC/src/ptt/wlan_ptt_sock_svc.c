@@ -62,7 +62,7 @@ static void ptt_sock_dump_buf(const unsigned char * pbuf, int cnt)
     int i;
     for (i = 0; i < cnt ; i++) {
         if ((i%16)==0)
-            VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,"\n%pK:", pbuf);
+            VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,"\n%p:", pbuf);
         VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO," %02X", *pbuf);
         pbuf++;
     }
@@ -178,7 +178,7 @@ static void ptt_sock_proc_reg_req(tAniHdr *wmsg, int radio)
    hdd_ctx_handle->ptt_pid = reg_req->pid;
    rspmsg.regReq.pid= reg_req->pid;
    rspmsg.wniHdr.type = cpu_to_be16(ANI_MSG_APP_REG_RSP);
-   rspmsg.wniHdr.length = cpu_to_be16(sizeof(rspmsg.wniHdr));
+   rspmsg.wniHdr.length = cpu_to_be16(sizeof(rspmsg));
    if (ptt_sock_send_msg_to_app((tAniHdr *)&rspmsg.wniHdr, radio,
       ANI_NL_MSG_PUMAC, reg_req->pid) < 0)
    {
@@ -249,10 +249,6 @@ static void ptt_cmd_handler(const void *data, int data_len, void *ctx, int pid)
 	ptt_app_reg_req *payload;
 	struct nlattr *tb[CLD80211_ATTR_MAX + 1];
 
-	/*
-	 * audit note: it is ok to pass a NULL policy here since a
-	 * length check on the data is added later already
-	 */
 	if (nla_parse(tb, CLD80211_ATTR_MAX, data, data_len, NULL)) {
 		PTT_TRACE(VOS_TRACE_LEVEL_ERROR, "Invalid ATTR");
 		return;
@@ -260,12 +256,6 @@ static void ptt_cmd_handler(const void *data, int data_len, void *ctx, int pid)
 
 	if (!tb[CLD80211_ATTR_DATA]) {
 		PTT_TRACE(VOS_TRACE_LEVEL_ERROR, "attr ATTR_DATA failed");
-		return;
-	}
-
-	if (nla_len(tb[CLD80211_ATTR_DATA]) < sizeof(struct ptt_app_reg_req)) {
-		PTT_TRACE(VOS_TRACE_LEVEL_ERROR, "%s:attr length check fails\n",
-			__func__);
 		return;
 	}
 
@@ -306,11 +296,6 @@ int ptt_sock_activate_svc(void *hdd_ctx)
 	register_cld_cmd_cb(ANI_NL_MSG_PTT, ptt_cmd_handler, NULL);
 	return 0;
 }
-
-void ptt_sock_deactivate_svc()
-{
-}
-
 #else
 int ptt_sock_activate_svc(void *hdd_ctx)
 {
@@ -319,12 +304,6 @@ int ptt_sock_activate_svc(void *hdd_ctx)
    nl_srv_register(ANI_NL_MSG_PUMAC, ptt_sock_rx_nlink_msg);
    nl_srv_register(ANI_NL_MSG_PTT, ptt_sock_rx_nlink_msg);
    return 0;
-}
-
-void ptt_sock_deactivate_svc()
-{
-	nl_srv_unregister(ANI_NL_MSG_PUMAC, ptt_sock_rx_nlink_msg);
-	nl_srv_unregister(ANI_NL_MSG_PTT, ptt_sock_rx_nlink_msg);
 }
 #endif
 #endif // PTT_SOCK_SVC_ENABLE

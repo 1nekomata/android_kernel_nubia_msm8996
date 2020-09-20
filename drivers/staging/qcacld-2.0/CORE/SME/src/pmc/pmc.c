@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014, 2016-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014, 2016 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -982,13 +982,10 @@ void pmcTrafficTimerExpired (tHalHandle hHal)
         return;
     }
 
-    /* Untill DHCP and set key is not completed remain in power active */
-    if (pMac->pmc.remainInPowerActiveTillDHCP ||
-       pMac->pmc.full_power_till_set_key) {
-        pmcLog(pMac, LOG2,
-          FL("BMPS Traffic Timer expired before DHCP(%d) or set key (%d) completion ignore enter BMPS"),
-          pMac->pmc.remainInPowerActiveTillDHCP,
-          pMac->pmc.full_power_till_set_key);
+    /* Until DHCP is not completed remain in power active */
+    if(pMac->pmc.remainInPowerActiveTillDHCP)
+    {
+        pmcLog(pMac, LOG2, FL("BMPS Traffic Timer expired before DHCP completion ignore enter BMPS"));
         pMac->pmc.remainInPowerActiveThreshold++;
         if( pMac->pmc.remainInPowerActiveThreshold >= DHCP_REMAIN_POWER_ACTIVE_THRESHOLD)
         {
@@ -996,7 +993,6 @@ void pmcTrafficTimerExpired (tHalHandle hHal)
                   FL("Remain in power active DHCP threshold reached FALLBACK to enable enter BMPS"));
            /*FALLBACK: reset the flag to make BMPS entry possible*/
            pMac->pmc.remainInPowerActiveTillDHCP = FALSE;
-           pMac->pmc.full_power_till_set_key = false;
            pMac->pmc.remainInPowerActiveThreshold = 0;
         }
         //Activate the Traffic Timer again for entering into BMPS
@@ -2555,7 +2551,6 @@ tANI_BOOLEAN pmcShouldBmpsTimerRun( tpAniSirGlobal pMac )
         pmcLog(pMac, LOG1, FL("No Infra Session. BMPS can't be started"));
         return eANI_BOOLEAN_FALSE;
     }
-
     return eANI_BOOLEAN_TRUE;
 }
 
@@ -3164,7 +3159,6 @@ eHalStatus pmcOffloadDisableStaPsHandler(tpAniSirGlobal pMac,
      * honored
      */
     pmc->configStaPsEnabled = FALSE;
-    pmc->configDefStaPsEnabled = FALSE;
 
     /*
      * Check whether the give session is Infra and in Connected State
@@ -3219,18 +3213,13 @@ void pmcOffloadAutoPsEntryTimerExpired(void *pmcInfo)
 {
     tpPsOffloadPerSessionInfo pmc = (tpPsOffloadPerSessionInfo)pmcInfo;
     tpAniSirGlobal pMac = pmc->pMac;
-    eHalStatus status;
 
     smsLog(pMac, LOG2, FL("Auto PS timer expired"));
 
-    status = pmcOffloadEnableStaPsHandler(pMac, pmc->sessionId);
-
-    if (eHAL_STATUS_FAILURE == status) {
+    if(eHAL_STATUS_FAILURE == pmcOffloadEnableStaPsHandler(pMac,
+                                                pmc->sessionId))
+    {
         smsLog(pMac, LOGE, FL("Auto PS timer expired in wrong state"));
-    }
-    else if ((eHAL_STATUS_SUCCESS == status) ||
-            (eHAL_STATUS_PMC_NOT_NOW == status)) {
-        pmc->configStaPsEnabled = TRUE;
     }
 }
 
@@ -3333,14 +3322,9 @@ eHalStatus pmcOffloadExitPowersaveState(tpAniSirGlobal pMac, tANI_U32 sessionId)
      /* Call Full Power Req Cbs */
      pmcOffloadDoFullPowerCallbacks(pMac, sessionId, eHAL_STATUS_SUCCESS);
 
-     if (pmc->configStaPsEnabled || pmc->configDefStaPsEnabled) {
-        if (true == vos_is_mon_enable()) {
-           smsLog(pMac, LOGE, FL("Montior is enabled, skip start StaPsTimer"));
-           return eHAL_STATUS_SUCCESS;
-        }
+     if (pmc->configStaPsEnabled || pmc->configDefStaPsEnabled)
         pmcOffloadStartAutoStaPsTimer(pMac, sessionId,
                                       pmc->autoPsEntryTimerPeriod);
-        }
      else
         smsLog(pMac, LOGE, FL("Master Sta Ps Disabled"));
      return eHAL_STATUS_SUCCESS;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2017, 2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2016 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -618,7 +618,7 @@ void limSendSmeMgmtFrameInd(
                     tpAniSirGlobal pMac, tANI_U8 frameType,
                     tANI_U8  *frame, tANI_U32 frameLen, tANI_U16 sessionId,
                     tANI_U32 rxChannel, tpPESession psessionEntry,
-                    tANI_S8 rxRssi, enum rxmgmt_flags rx_flags)
+                    tANI_S8 rxRssi)
 {
     tpSirSmeMgmtFrameInd pSirSmeMgmtFrame = NULL;
     tANI_U16              length;
@@ -638,7 +638,6 @@ void limSendSmeMgmtFrameInd(
     pSirSmeMgmtFrame->sessionId = sessionId;
     pSirSmeMgmtFrame->frameType = frameType;
     pSirSmeMgmtFrame->rxRssi = rxRssi;
-    pSirSmeMgmtFrame->rx_flags = rx_flags;
 
     if (pMac->fP2pListenOffload)
         goto send_frame;
@@ -927,7 +926,7 @@ send_action_frame:
                 }
                 nBytes += noaLen;
                 limLog( pMac, LOGE,
-                        FL("noaLen=%d origLen=%d pP2PIe=%pK"
+                        FL("noaLen=%d origLen=%d pP2PIe=%p"
                         " nBytes=%d nBytesToCopy=%zu "),
                                    noaLen,origLen,pP2PIe,nBytes,
                    ((pP2PIe + origLen + 2) - (v_U8_t *)pMbMsg->data));
@@ -1088,6 +1087,7 @@ send_frame1:
         }
         else
         {
+             pMac->lim.mgmtFrameSessionId = pMbMsg->sessionId;
              limLog( pMac, LOG2, FL("lim.actionFrameSessionId = %u" ),
                      pMac->lim.mgmtFrameSessionId);
 

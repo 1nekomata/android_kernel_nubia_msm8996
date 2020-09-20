@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2016 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -233,7 +233,7 @@ void vos_mem_trace_dump(int level)
 	VOS_STATUS vosStatus;
 	struct s_vos_mem_struct *memStruct;
 
-	adf_os_spin_lock(&vosMemList.lock);
+	spin_lock(&vosMemList.lock);
 	hdd_list_peek_front(&vosMemList, &pNodeNext);
 	do {
 		if (pNodeNext == NULL)
@@ -251,7 +251,7 @@ void vos_mem_trace_dump(int level)
 		pNodeNext = NULL;
 	} while ((vosStatus = hdd_list_peek_next(&vosMemList,
 		pNode, &pNodeNext)) == VOS_STATUS_SUCCESS);
-	adf_os_spin_unlock(&vosMemList.lock);
+	spin_unlock(&vosMemList.lock);
 	VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_FATAL,
 		"vos_mem [total active] count %d size %d", i, totalUsed);
 
@@ -332,9 +332,9 @@ void vos_mem_clean()
 
        do
        {
-          adf_os_spin_lock(&vosMemList.lock);
+          spin_lock(&vosMemList.lock);
           vosStatus = hdd_list_remove_front(&vosMemList, &pNode);
-          adf_os_spin_unlock(&vosMemList.lock);
+          spin_unlock(&vosMemList.lock);
           if(VOS_STATUS_SUCCESS == vosStatus)
           {
              memStruct = (struct s_vos_mem_struct*)pNode;
@@ -396,6 +396,7 @@ v_VOID_t *vos_mem_malloc_debug(v_SIZE_t size, const char *fileName,
    v_VOID_t* memPtr = NULL;
    v_SIZE_t new_size;
    int flags = GFP_KERNEL;
+   unsigned long IrqFlags;
    unsigned long  time_before_kmalloc;
 
 
@@ -412,7 +413,7 @@ v_VOID_t *vos_mem_malloc_debug(v_SIZE_t size, const char *fileName,
        flags = GFP_ATOMIC;
    }
 
-#if defined(CONFIG_WCNSS_MEM_PRE_ALLOC) || defined(CONFIG_VOS_MEM_PRE_ALLOC)
+#ifdef CONFIG_WCNSS_MEM_PRE_ALLOC
    if (size > WCNSS_PRE_ALLOC_GET_THRESHOLD)
    {
       v_VOID_t *pmem;
@@ -451,10 +452,10 @@ v_VOID_t *vos_mem_malloc_debug(v_SIZE_t size, const char *fileName,
       vos_mem_copy(&memStruct->header[0], &WLAN_MEM_HEADER[0], sizeof(WLAN_MEM_HEADER));
       vos_mem_copy( (v_U8_t*)(memStruct + 1) + size, &WLAN_MEM_TAIL[0], sizeof(WLAN_MEM_TAIL));
 
-      adf_os_spin_lock_irqsave(&vosMemList.lock);
+      spin_lock_irqsave(&vosMemList.lock, IrqFlags);
       vosStatus = hdd_list_insert_front(&vosMemList, &memStruct->pNode);
       alloc_trace_usage(fileName, lineNum, size);
-      adf_os_spin_unlock_irqrestore(&vosMemList.lock);
+      spin_unlock_irqrestore(&vosMemList.lock, IrqFlags);
       if(VOS_STATUS_SUCCESS != vosStatus)
       {
          VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
@@ -464,26 +465,31 @@ v_VOID_t *vos_mem_malloc_debug(v_SIZE_t size, const char *fileName,
       memPtr = (v_VOID_t*)(memStruct + 1);
    }
 
+   if (!memPtr)
+       vos_log_low_resource_failure(WIFI_EVENT_MEMORY_FAILURE);
+
    return memPtr;
 }
 
 v_VOID_t vos_mem_free( v_VOID_t *ptr )
 {
+    unsigned long IrqFlags;
+
     if (ptr != NULL)
     {
         VOS_STATUS vosStatus;
         struct s_vos_mem_struct* memStruct = ((struct s_vos_mem_struct*)ptr) - 1;
 
-#if defined(CONFIG_WCNSS_MEM_PRE_ALLOC) || defined(CONFIG_VOS_MEM_PRE_ALLOC)
+#ifdef CONFIG_WCNSS_MEM_PRE_ALLOC
         if (wcnss_prealloc_put(ptr))
             return;
 #endif
 
-        adf_os_spin_lock_irqsave(&vosMemList.lock);
+        spin_lock_irqsave(&vosMemList.lock, IrqFlags);
         vosStatus = hdd_list_remove_node(&vosMemList, &memStruct->pNode);
         free_trace_usage(memStruct->fileName, memStruct->lineNum,
                          memStruct->size);
-        adf_os_spin_unlock_irqrestore(&vosMemList.lock);
+        spin_unlock_irqrestore(&vosMemList.lock, IrqFlags);
 
         if(VOS_STATUS_SUCCESS == vosStatus)
         {
@@ -515,7 +521,7 @@ v_VOID_t vos_mem_free( v_VOID_t *ptr )
 v_VOID_t * vos_mem_malloc( v_SIZE_t size )
 {
    int flags = GFP_KERNEL;
-#if defined(CONFIG_WCNSS_MEM_PRE_ALLOC) || defined(CONFIG_VOS_MEM_PRE_ALLOC)
+#ifdef CONFIG_WCNSS_MEM_PRE_ALLOC
     v_VOID_t* pmem;
 #endif
    v_VOID_t* memPtr = NULL;
@@ -532,7 +538,7 @@ v_VOID_t * vos_mem_malloc( v_SIZE_t size )
    {
       flags = GFP_ATOMIC;
    }
-#if defined(CONFIG_WCNSS_MEM_PRE_ALLOC) || defined(CONFIG_VOS_MEM_PRE_ALLOC)
+#ifdef CONFIG_WCNSS_MEM_PRE_ALLOC
    if(size > WCNSS_PRE_ALLOC_GET_THRESHOLD)
    {
        pmem = wcnss_prealloc_get(size);
@@ -554,6 +560,8 @@ v_VOID_t * vos_mem_malloc( v_SIZE_t size )
            __func__,
            vos_timer_get_system_time() - time_before_kmalloc,
            size, (void *)_RET_IP_);
+   if (!memPtr)
+       vos_log_low_resource_failure(WIFI_EVENT_MEMORY_FAILURE);
 
    return memPtr;
 }
@@ -563,7 +571,7 @@ v_VOID_t vos_mem_free( v_VOID_t *ptr )
     if (ptr == NULL)
       return;
 
-#if defined(CONFIG_WCNSS_MEM_PRE_ALLOC) || defined(CONFIG_VOS_MEM_PRE_ALLOC)
+#ifdef CONFIG_WCNSS_MEM_PRE_ALLOC
     if(wcnss_prealloc_put(ptr))
         return;
 #endif
@@ -618,7 +626,7 @@ v_VOID_t vos_mem_copy( v_VOID_t *pDst, const v_VOID_t *pSrc, v_SIZE_t numBytes )
    if ((pDst == NULL) || (pSrc==NULL))
    {
       VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s called with NULL parameter, source:%pK destination:%pK",
+                "%s called with NULL parameter, source:%p destination:%p",
                 __func__, pSrc, pDst);
       VOS_ASSERT(0);
       return;
@@ -637,7 +645,7 @@ v_VOID_t vos_mem_move( v_VOID_t *pDst, const v_VOID_t *pSrc, v_SIZE_t numBytes )
    if ((pDst == NULL) || (pSrc==NULL))
    {
       VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s called with NULL parameter, source:%pK destination:%pK",
+                "%s called with NULL parameter, source:%p destination:%p",
                 __func__, pSrc, pDst);
       VOS_ASSERT(0);
       return;
@@ -656,7 +664,7 @@ v_BOOL_t vos_mem_compare(const v_VOID_t *pMemory1, const v_VOID_t *pMemory2, v_U
    if ((pMemory1 == NULL) || (pMemory2==NULL))
    {
       VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
-                "%s called with NULL parameter, p1:%pK p2:%pK",
+                "%s called with NULL parameter, p1:%p p2:%p",
                 __func__, pMemory1, pMemory2);
       VOS_ASSERT(0);
       return VOS_FALSE;
@@ -723,10 +731,10 @@ v_VOID_t * vos_mem_dma_malloc_debug( v_SIZE_t size, char* fileName, v_U32_t line
       vos_mem_copy(&memStruct->header[0], &WLAN_MEM_HEADER[0], sizeof(WLAN_MEM_HEADER));
       vos_mem_copy( (v_U8_t*)(memStruct + 1) + size, &WLAN_MEM_TAIL[0], sizeof(WLAN_MEM_TAIL));
 
-      adf_os_spin_lock(&vosMemList.lock);
+      spin_lock(&vosMemList.lock);
       vosStatus = hdd_list_insert_front(&vosMemList, &memStruct->pNode);
       alloc_trace_usage(fileName, lineNum, size);
-      adf_os_spin_unlock(&vosMemList.lock);
+      spin_unlock(&vosMemList.lock);
       if(VOS_STATUS_SUCCESS != vosStatus)
       {
          VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
@@ -746,11 +754,11 @@ v_VOID_t vos_mem_dma_free( v_VOID_t *ptr )
         VOS_STATUS vosStatus;
         struct s_vos_mem_struct* memStruct = ((struct s_vos_mem_struct*)ptr) - 1;
 
-        adf_os_spin_lock(&vosMemList.lock);
+        spin_lock(&vosMemList.lock);
         vosStatus = hdd_list_remove_node(&vosMemList, &memStruct->pNode);
         free_trace_usage(memStruct->fileName, memStruct->lineNum,
                              memStruct->size);
-        adf_os_spin_unlock(&vosMemList.lock);
+        spin_unlock(&vosMemList.lock);
 
         if(VOS_STATUS_SUCCESS == vosStatus)
         {

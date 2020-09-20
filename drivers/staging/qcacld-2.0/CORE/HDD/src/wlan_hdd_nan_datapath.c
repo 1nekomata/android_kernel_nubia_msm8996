@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -339,9 +339,7 @@ static int hdd_ndi_create_req_handler(hdd_context_t *hdd_ctx,
 	}
 
 	adapter = hdd_open_adapter(hdd_ctx, WLAN_HDD_NDI, iface_name,
-				   wlan_hdd_get_intf_addr(hdd_ctx),
-				   NET_NAME_UNKNOWN,
-				   VOS_TRUE);
+			wlan_hdd_get_intf_addr(hdd_ctx), VOS_TRUE);
 	if (!adapter) {
 		hddLog(LOGE, FL("hdd_open_adapter failed"));
 		return -ENOMEM;
@@ -542,13 +540,9 @@ static int hdd_ndp_initiator_req_handler(hdd_context_t *hdd_ctx,
 		req.channel =
 			nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_NDP_CHANNEL]);
 
-	if (tb[QCA_WLAN_VENDOR_ATTR_NDP_CHANNEL_CONFIG]) {
+	if (tb[QCA_WLAN_VENDOR_ATTR_NDP_CHANNEL_CONFIG])
 		req.channel_cfg =
 			nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_NDP_CHANNEL_CONFIG]);
-	} else {
-		hddLog(LOGE, FL("Channel config is unavailable"));
-		return -EINVAL;
-	}
 
 	if (!tb[QCA_WLAN_VENDOR_ATTR_NDP_SERVICE_INSTANCE_ID]) {
 		hddLog(LOGE, FL("NDP service instance ID is unavailable"));
@@ -604,8 +598,8 @@ static int hdd_ndp_initiator_req_handler(hdd_context_t *hdd_ctx,
 	}
 
 	hddLog(LOG1,
-		FL("vdev_id: %d, transaction_id: %d, channel: %d, service_instance_id: %d, ndp_app_info_len: %d, csid: %d, peer_discovery_mac_addr: %pM"),
-		req.vdev_id, req.transaction_id, req.channel,
+		FL("vdev_id: %d, transaction_id: %d, channel: %d, channel_cfg: %d, service_instance_id: %d, ndp_app_info_len: %d, csid: %d, peer_discovery_mac_addr: %pM"),
+		req.vdev_id, req.transaction_id, req.channel, req.channel_cfg,
 		req.service_instance_id, req.ndp_info.ndp_app_info_len,
 		req.ncs_sk_type, req.peer_discovery_mac_addr.bytes);
 	status = sme_ndp_initiator_req_handler(hal, &req);
@@ -853,7 +847,7 @@ static void hdd_ndp_iface_create_rsp_handler(hdd_adapter_t *adapter,
 	uint32_t create_reason = NDP_NAN_DATA_IFACE_CREATE_FAILED;
 	hdd_station_ctx_t *sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
 	v_MACADDR_t bc_mac_addr = VOS_MAC_ADDR_BROADCAST_INITIALIZER;
-	tCsrRoamInfo *roam_info;
+	tCsrRoamInfo roam_info = {0};
 	tSirBssDescription tmp_bss_descp = {0};
 
 	ENTER();
@@ -957,17 +951,12 @@ static void hdd_ndp_iface_create_rsp_handler(hdd_adapter_t *adapter,
 	if (create_fail)
 		goto close_ndi;
 
-	roam_info = vos_mem_malloc(sizeof(*roam_info));
-	if (!roam_info)
-		goto nla_put_failure;
-
 	sta_ctx->broadcast_staid = ndi_rsp->sta_id;
 	hdd_save_peer(sta_ctx, sta_ctx->broadcast_staid, &bc_mac_addr);
-	hdd_roamRegisterSTA(adapter, roam_info,
+	hdd_roamRegisterSTA(adapter, &roam_info,
 			sta_ctx->broadcast_staid,
 			&bc_mac_addr, &tmp_bss_descp);
 	hdd_ctx->sta_to_adapter[sta_ctx->broadcast_staid] = adapter;
-	vos_mem_free(roam_info);
 
 	EXIT();
 	return;
@@ -1246,7 +1235,7 @@ static void hdd_ndp_new_peer_ind_handler(hdd_adapter_t *adapter,
 	struct sme_ndp_peer_ind *new_peer_ind = ind_params;
 	hdd_context_t *hdd_ctx = WLAN_HDD_GET_CTX(adapter);
 	tSirBssDescription tmp_bss_descp = {0};
-	tCsrRoamInfo *roam_info;
+	tCsrRoamInfo roam_info = {0};
 	struct nan_datapath_ctx *ndp_ctx = WLAN_HDD_GET_NDP_CTX_PTR(adapter);
 	hdd_station_ctx_t *sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
 
@@ -1267,27 +1256,23 @@ static void hdd_ndp_new_peer_ind_handler(hdd_adapter_t *adapter,
 		return;
 	}
 
-	roam_info = vos_mem_malloc(sizeof(*roam_info));
-	if (!roam_info)
-		return;
 	/* this function is called for each new peer */
 	ndp_ctx->active_ndp_peers++;
 	hddLog(LOG1, FL("vdev_id: %d, num_peers: %d"),
 		adapter->sessionId,  ndp_ctx->active_ndp_peers);
-	hdd_roamRegisterSTA(adapter, roam_info, new_peer_ind->sta_id,
+	hdd_roamRegisterSTA(adapter, &roam_info, new_peer_ind->sta_id,
 			    &new_peer_ind->peer_mac_addr, &tmp_bss_descp);
 	hdd_ctx->sta_to_adapter[new_peer_ind->sta_id] = adapter;
 	/* perform following steps for first new peer ind */
 	if (ndp_ctx->active_ndp_peers == 1) {
 		hddLog(LOG1, FL("Set ctx connection state to connected"));
 		sta_ctx->conn_info.connState = eConnectionState_NdiConnected;
-		hdd_wmm_connect(adapter, roam_info, eCSR_BSS_TYPE_NDI);
+		hdd_wmm_connect(adapter, &roam_info, eCSR_BSS_TYPE_NDI);
 		wlan_hdd_netif_queue_control(adapter,
 			WLAN_WAKE_ALL_NETIF_QUEUE,
 			WLAN_CONTROL_PATH);
 	}
 
-	vos_mem_free(roam_info);
 	EXIT();
 }
 /**
@@ -1784,12 +1769,6 @@ static void hdd_ndp_end_ind_handler(hdd_adapter_t *adapter,
 			continue;
 		}
 		ndp_ctx = WLAN_HDD_GET_NDP_CTX_PTR(ndi_adapter);
-		if (!ndp_ctx) {
-			hddLog(LOGE,
-			FL("ndp_ctx is NULL for vdev id: %d"),
-			end_ind->ndp_map[i].vdev_id);
-			continue;
-		}
 		idx = hdd_get_peer_idx(sta_ctx,
 				&end_ind->ndp_map[i].peer_ndi_mac_addr);
 		if (idx == INVALID_PEER_IDX) {
@@ -1810,7 +1789,6 @@ static void hdd_ndp_end_ind_handler(hdd_adapter_t *adapter,
 				data_len, QCA_NL80211_VENDOR_SUBCMD_NDP_INDEX,
 				GFP_KERNEL);
 	if (!vendor_event) {
-		vos_mem_free(ndp_instance_array);
 		hddLog(LOGE, FL("cfg80211_vendor_event_alloc failed"));
 		return;
 	}
@@ -1936,7 +1914,7 @@ static int __wlan_hdd_cfg80211_process_ndp_cmd(struct wiphy *wiphy,
 		hddLog(LOGE, FL("NAN datapath is not enabled"));
 		return -EPERM;
 	}
-	if (wlan_cfg80211_nla_parse(tb, QCA_WLAN_VENDOR_ATTR_NDP_PARAMS_MAX,
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_NDP_PARAMS_MAX,
 			data, data_len,
 			qca_wlan_vendor_ndp_policy)) {
 		hddLog(LOGE, FL("Invalid NDP vendor command attributes"));
@@ -2044,15 +2022,6 @@ int hdd_init_nan_data_mode(struct hdd_adapter_s *adapter)
 		goto error_sme_open;
 	}
 
-	ret_val = process_wma_set_command((int)adapter->sessionId,
-			(int)WMI_PDEV_PARAM_BURST_ENABLE,
-			(int)hdd_ctx->cfg_ini->enableSifsBurst,
-			PDEV_CMD);
-	if (0 != ret_val) {
-		hddLog(LOGE, FL("WMI_PDEV_PARAM_BURST_ENABLE set failed %d"),
-				ret_val);
-	}
-
 	/* open sme session for future use */
 	hal_status = sme_OpenSession(hdd_ctx->hHal, hdd_smeRoamCallback,
 			adapter, (uint8_t *)&adapter->macAddressCurrent,
@@ -2103,6 +2072,15 @@ int hdd_init_nan_data_mode(struct hdd_adapter_s *adapter)
 	}
 
 	set_bit(WMM_INIT_DONE, &adapter->event_flags);
+
+	ret_val = process_wma_set_command((int)adapter->sessionId,
+			(int)WMI_PDEV_PARAM_BURST_ENABLE,
+			(int)hdd_ctx->cfg_ini->enableSifsBurst,
+			PDEV_CMD);
+	if (0 != ret_val) {
+		hddLog(LOGE, FL("WMI_PDEV_PARAM_BURST_ENABLE set failed %d"),
+				ret_val);
+	}
 
 	ndp_ctx->state = NAN_DATA_NDI_CREATING_STATE;
 	return ret_val;

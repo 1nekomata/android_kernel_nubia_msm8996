@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2016 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -249,7 +249,7 @@ static A_STATUS HIFSend_internal(HIF_DEVICE *hifDevice, a_uint8_t PipeID,
 	uint32_t head_data_len, tmp_frag_count = 0;
 	unsigned char *pData;
 
-	AR_DEBUG_PRINTF(USB_HIF_DEBUG_BULK_OUT, ("+%s pipe : %d, buf:0x%pK\n",
+	AR_DEBUG_PRINTF(USB_HIF_DEBUG_BULK_OUT, ("+%s pipe : %d, buf:0x%p\n",
 			__func__, PipeID, buf));
 
 	a_mem_trace(buf);
@@ -479,10 +479,9 @@ static HIF_DEVICE_USB *usb_hif_create(struct usb_interface *interface)
 
 		adf_os_mem_zero(device, sizeof(*device));
 		usb_set_intfdata(interface, device);
-		adf_os_spinlock_init(&(device->cs_lock));
-		adf_os_spinlock_init(&(device->rx_lock));
-		adf_os_spinlock_init(&(device->tx_lock));
-		adf_os_spinlock_init(&(device->rx_prestart_lock));
+		spin_lock_init(&(device->cs_lock));
+		spin_lock_init(&(device->rx_lock));
+		spin_lock_init(&(device->tx_lock));
 		device->udev = dev;
 		device->interface = interface;
 
@@ -916,7 +915,7 @@ void HIFDumpInfo(HIF_DEVICE *hif)
 		ep_desc = &iface_desc->endpoint[i].desc;
 		if (ep_desc) {
 			pr_info(
-			     "ep_desc : %pK Index : %d: DescType : %d Addr : %d Maxp : %d Atrrib : %d\n",
+			     "ep_desc : %p Index : %d: DescType : %d Addr : %d Maxp : %d Atrrib : %d\n",
 			     ep_desc, i,
 			     ep_desc->bDescriptorType,
 			     ep_desc->bEndpointAddress, ep_desc->wMaxPacketSize,
@@ -1071,5 +1070,5 @@ void HIFSetBundleMode(HIF_DEVICE *hif_device, bool enabled, int rx_bundle_cnt)
  */
 bool hif_is_80211_fw_wow_required(void)
 {
-	return true;
+	return false;
 }

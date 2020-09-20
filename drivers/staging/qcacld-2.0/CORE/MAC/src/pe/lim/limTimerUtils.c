@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016, 2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -56,11 +56,6 @@
 #define LIM_JOIN_PROBE_REQ_TIMER_MS              200
 #define LIM_AUTH_RETRY_TIMER_MS              60
 
-/*
- * SAE auth timer of 5secs. This is required for duration of entire SAE
- * authentication.
- */
-#define LIM_AUTH_SAE_TIMER_MS 5000
 
 //default beacon interval value used in HB timer interval calculation
 #define LIM_HB_TIMER_BEACON_INTERVAL             100
@@ -159,8 +154,7 @@ limCreateTimers(tpAniSirGlobal pMac)
     cfgValue = SYS_MS_TO_TICKS(cfgValue);
 
     /* Limiting max number of probe req for each channel scan */
-    if (cfgValue1)
-        pMac->lim.maxProbe = (cfgValue/cfgValue1);
+    pMac->lim.maxProbe = (cfgValue/cfgValue1);
 
     if (tx_timer_create(&pMac->lim.limTimers.gLimMaxChannelTimer,
                         "MAX CHANNEL TIMEOUT",
@@ -434,20 +428,6 @@ limCreateTimers(tpAniSirGlobal pMac)
             goto err_timer;
         }
 
-        /*
-         * SAE auth timer of 5secs. This is required for duration of entire SAE
-         * authentication.
-         */
-        if ((tx_timer_create(&pMac->lim.limTimers.sae_auth_timer,
-                             "SAE AUTH Timer",
-                             limTimerHandler, SIR_LIM_AUTH_SAE_TIMEOUT,
-                             SYS_MS_TO_TICKS(LIM_AUTH_SAE_TIMER_MS), 0,
-                             TX_NO_ACTIVATE)) != TX_SUCCESS) {
-            limLog(pMac, LOGP,
-                   FL("could not create SAE AUTH Timer"));
-            goto err_timer;
-        }
-
         if (wlan_cfgGetInt(pMac, WNI_CFG_BACKGROUND_SCAN_PERIOD,
                       &cfgValue) != eSIR_SUCCESS)
         {
@@ -490,6 +470,27 @@ limCreateTimers(tpAniSirGlobal pMac)
             goto err_timer;
         }
     }
+
+
+    cfgValue = SYS_MS_TO_TICKS(LIM_HASH_MISS_TIMER_MS);
+
+    if (tx_timer_create(
+                        &pMac->lim.limTimers.gLimSendDisassocFrameThresholdTimer,
+                        "Disassoc throttle TIMEOUT",
+                        limSendDisassocFrameThresholdHandler,
+                        SIR_LIM_HASH_MISS_THRES_TIMEOUT,
+                        cfgValue,
+                        cfgValue,
+                        TX_AUTO_ACTIVATE) != TX_SUCCESS)
+    {
+        /// Could not start Send Disassociate Frame Threshold timer.
+        // Log error
+        limLog(pMac, LOGP,
+               FL("create Disassociate throttle timer failed"));
+        goto err_timer;
+    }
+    PELOG1(limLog(pMac, LOG1,
+           FL("Created Disassociate throttle timer "));)
 
     /**
      * Create keep alive timer and  activate it right away for AP role
@@ -754,6 +755,7 @@ limCreateTimers(tpAniSirGlobal pMac)
             tx_timer_delete(&pMac->lim.limTimers.gpLimCnfWaitTimer[i]);
         }
         tx_timer_delete(&pMac->lim.limTimers.gLimKeepaliveTimer);
+        tx_timer_delete(&pMac->lim.limTimers.gLimSendDisassocFrameThresholdTimer);
         tx_timer_delete(&pMac->lim.limTimers.gLimBackgroundScanTimer);
         tx_timer_delete(&pMac->lim.limTimers.gLimProbeAfterHBTimer);
         tx_timer_delete(&pMac->lim.limTimers.gLimHeartBeatTimer);
@@ -772,7 +774,6 @@ limCreateTimers(tpAniSirGlobal pMac)
         tx_timer_delete(&pMac->lim.limTimers.gLimMinChannelTimer);
         tx_timer_delete(&pMac->lim.limTimers.gLimP2pSingleShotNoaInsertTimer);
         tx_timer_delete(&pMac->lim.limTimers.gLimActiveToPassiveChannelTimer);
-        tx_timer_delete(&pMac->lim.limTimers.sae_auth_timer);
 
         if(NULL != pMac->lim.gLimPreAuthTimerTable.pTable)
         {
@@ -944,16 +945,7 @@ limAssocFailureTimerHandler(void *pMacGlobal, tANI_U32 param)
        (pMac->lim.pSessionEntry->limMlmState == eLIM_MLM_WT_FT_REASSOC_RSP_STATE))
     {
         limLog(pMac, LOGE, FL("Reassoc timeout happened"));
-#ifdef FEATURE_WLAN_ESE
-	if (((pMac->lim.pSessionEntry->isESEconnection) &&
-             (pMac->lim.reAssocRetryAttempt <
-             (LIM_MAX_REASSOC_RETRY_LIMIT - 1)))||
-             ((!pMac->lim.pSessionEntry->isESEconnection) &&
-             (pMac->lim.reAssocRetryAttempt < LIM_MAX_REASSOC_RETRY_LIMIT))
-	   )
-#else
-        if (pMac->lim.reAssocRetryAttempt < LIM_MAX_REASSOC_RETRY_LIMIT)
-#endif
+        if(pMac->lim.reAssocRetryAttempt < LIM_MAX_REASSOC_RETRY_LIMIT)
         {
             limSendRetryReassocReqFrame(pMac, pMac->lim.pSessionEntry->pLimMlmReassocRetryReq, pMac->lim.pSessionEntry);
             pMac->lim.reAssocRetryAttempt++;
@@ -1675,24 +1667,6 @@ limDeactivateAndChangeTimer(tpAniSirGlobal pMac, tANI_U32 timerId)
         }
         break;
 
-    case eLIM_AUTH_SAE_TIMER:
-        if (tx_timer_deactivate(&pMac->lim.limTimers.sae_auth_timer)
-                != TX_SUCCESS) {
-            limLog(pMac, LOGP, FL("Unable to deactivate SAE auth timer"));
-            return;
-        }
-
-        /* Change timer to reactivate it in future */
-        val = SYS_MS_TO_TICKS(LIM_AUTH_SAE_TIMER_MS);
-
-        if (tx_timer_change(&pMac->lim.limTimers.sae_auth_timer,
-                                val, 0) != TX_SUCCESS) {
-            limLog(pMac, LOGP, FL("unable to change SAE auth timer"));
-            return;
-        }
-
-        break;
-
         default:
             // Invalid timerId. Log error
             break;
@@ -2076,6 +2050,42 @@ void limActivateAuthRspTimer(tpAniSirGlobal pMac, tLimPreAuthNode *pAuthNode)
         limLog(pMac, LOGP,
                FL("could not activate auth rsp timer"));
     }
+}
+
+
+/**
+ * limSendDisassocFrameThresholdHandler()
+ *
+ *FUNCTION:
+ *        This function reloads the credit to the send disassociate frame bucket
+ *
+ *LOGIC:
+ *
+ *ASSUMPTIONS:
+ *
+ *NOTE:
+ * NA
+ *
+ * @param
+ *
+ * @return None
+ */
+
+void
+limSendDisassocFrameThresholdHandler(void *pMacGlobal, tANI_U32 param)
+{
+    tSirMsgQ    msg;
+    tANI_U32         statusCode;
+    tpAniSirGlobal pMac = (tpAniSirGlobal)pMacGlobal;
+
+    msg.type = SIR_LIM_HASH_MISS_THRES_TIMEOUT;
+    msg.bodyval = 0;
+    msg.bodyptr = NULL;
+
+    if ((statusCode = limPostMsgApi(pMac, &msg)) != eSIR_SUCCESS)
+            limLog(pMac, LOGE,
+        FL("posting to LIM failed, reason=%d"), statusCode);
+
 }
 
 /**

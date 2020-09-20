@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2017, 2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -40,7 +40,7 @@
 #include "wniApi.h"
 
 #include "sirCommon.h"
-#include "wni_cfg.h"
+#include "wniCfgSta.h"
 #include "cfgApi.h"
 
 
@@ -366,20 +366,10 @@ limAddPreAuthNode(tpAniSirGlobal pMac, struct tLimPreAuthNode *pAuthNode)
 void
 limReleasePreAuthNode(tpAniSirGlobal pMac, tpLimPreAuthNode pAuthNode)
 {
-	pAuthNode->fFree = 1;
-	if (pAuthNode->authType == eSIR_AUTH_TYPE_SAE &&
-	    pAuthNode->assoc_req.present) {
-		tpSirAssocReq assoc =
-			(tpSirAssocReq)pAuthNode->assoc_req.assoc_req;
-
-		if (assoc->assocReqFrameLength)
-			vos_mem_free(assoc->assocReqFrame);
-		vos_mem_free(assoc);
-		pAuthNode->assoc_req.present = false;
-	}
-	MTRACE(macTrace(pMac, TRACE_CODE_TIMER_DEACTIVATE, NO_SESSION, eLIM_PRE_AUTH_CLEANUP_TIMER));
-	tx_timer_deactivate(&pAuthNode->timer);
-	pMac->lim.gLimNumPreAuthContexts--;
+    pAuthNode->fFree = 1;
+    MTRACE(macTrace(pMac, TRACE_CODE_TIMER_DEACTIVATE, NO_SESSION, eLIM_PRE_AUTH_CLEANUP_TIMER));
+    tx_timer_deactivate(&pAuthNode->timer);
+    pMac->lim.gLimNumPreAuthContexts--;
 } /*** end limReleasePreAuthNode() ***/
 
 
@@ -426,7 +416,7 @@ limDeletePreAuthNode(tpAniSirGlobal pMac, tSirMacAddr macAddr)
 
 
         PELOG1(limLog(pMac, LOG1, FL("=====> limDeletePreAuthNode : first node to delete"));)
-        PELOG1(limLog(pMac, LOG1, FL("Release data entry: %pK id %d peer "),
+        PELOG1(limLog(pMac, LOG1, FL("Release data entry: %p id %d peer "),
                         pTempNode, pTempNode->authNodeIdx);
         limPrintMacAddr(pMac, macAddr, LOG1);)
         limReleasePreAuthNode(pMac, pTempNode);
@@ -447,7 +437,7 @@ limDeletePreAuthNode(tpAniSirGlobal pMac, tSirMacAddr macAddr)
             pPrevNode->next = pTempNode->next;
 
             PELOG1(limLog(pMac, LOG1, FL("=====> limDeletePreAuthNode : subsequent node to delete"));
-            limLog(pMac, LOG1, FL("Release data entry: %pK id %d peer "),
+            limLog(pMac, LOG1, FL("Release data entry: %p id %d peer "),
                          pTempNode, pTempNode->authNodeIdx);
             limPrintMacAddr(pMac, macAddr, LOG1);)
             limReleasePreAuthNode(pMac, pTempNode);
@@ -465,6 +455,10 @@ limDeletePreAuthNode(tpAniSirGlobal pMac, tSirMacAddr macAddr)
     limPrintMacAddr(pMac, macAddr, LOGP);
 
 } /*** end limDeletePreAuthNode() ***/
+
+
+
+
 
 /**
  * limRestoreFromPreAuthState
@@ -510,21 +504,23 @@ limRestoreFromAuthState(tpAniSirGlobal pMac, tSirResultCodes resultCode, tANI_U1
     /* Update PE session ID*/
     mlmAuthCnf.sessionId = sessionEntry->peSessionId;
 
+    /// Free up buffer allocated
+    /// for pMac->lim.gLimMlmAuthReq
+    vos_mem_free(pMac->lim.gpLimMlmAuthReq);
+    pMac->lim.gpLimMlmAuthReq = NULL;
+
+    sessionEntry->limMlmState = sessionEntry->limPrevMlmState;
+
     MTRACE(macTrace(pMac, TRACE_CODE_MLM_STATE, sessionEntry->peSessionId, sessionEntry->limMlmState));
     /* Set the authAckStatus status flag as sucess as
      * host have received the auth rsp and no longer auth
      * retry is needed also cancel the auth rety timer
      */
     pMac->auth_ack_status = LIM_AUTH_ACK_RCD_SUCCESS;
-
-    /* Auth retry and AUth failure timers are not started for SAE */
     /* 'Change' timer for future activations */
-    if (tx_timer_running(&pMac->lim.limTimers.
-                         g_lim_periodic_auth_retry_timer))
-        limDeactivateAndChangeTimer(pMac, eLIM_AUTH_RETRY_TIMER);
-    /* 'Change' timer for future activations */
-    if (tx_timer_running(&pMac->lim.limTimers.gLimAuthFailureTimer))
-        limDeactivateAndChangeTimer(pMac, eLIM_AUTH_FAIL_TIMER);
+    limDeactivateAndChangeTimer(pMac, eLIM_AUTH_RETRY_TIMER);
+    // 'Change' timer for future activations
+    limDeactivateAndChangeTimer(pMac, eLIM_AUTH_FAIL_TIMER);
 
     sirCopyMacAddr(currentBssId,sessionEntry->bssId);
 
@@ -533,25 +529,9 @@ limRestoreFromAuthState(tpAniSirGlobal pMac, tSirResultCodes resultCode, tANI_U1
         pMac->lim.gLimPreAuthChannelNumber = 0;
     }
 
-    if ((protStatusCode == eSIR_MAC_MAX_ASSOC_STA_REACHED_STATUS)
-             && (sessionEntry->sta_auth_retries_for_code17 <
-                            pMac->sta_auth_retries_for_code17)) {
-        limLog(pMac, LOG1, FL("Retry Auth "));
-        limDoSendAuthMgmtFrame(pMac, sessionEntry);
-        sessionEntry->sta_auth_retries_for_code17++;
-    } else {
-        /// Free up buffer allocated
-        /// for pMac->lim.gLimMlmAuthReq
-        vos_mem_free(pMac->lim.gpLimMlmAuthReq);
-        pMac->lim.gpLimMlmAuthReq = NULL;
-
-        sessionEntry->limMlmState = sessionEntry->limPrevMlmState;
-
-        limPostSmeMessage(pMac,
+    limPostSmeMessage(pMac,
                       LIM_MLM_AUTH_CNF,
                       (tANI_U32 *) &mlmAuthCnf);
-        sessionEntry->sta_auth_retries_for_code17 = 0;
-    }
 } /*** end limRestoreFromAuthState() ***/
 
 /**
@@ -629,7 +609,7 @@ limEncryptAuthFrame(tpAniSirGlobal pMac, tANI_U8 keyId, tANI_U8 *pKey, tANI_U8 *
     // Compute CRC-32 and place them in last 4 bytes of plain text
     limComputeCrc32(icv, pPlainText, framelen);
 
-    vos_mem_copy((pPlainText + framelen),
+    vos_mem_copy( pPlainText + framelen,
                   icv, SIR_MAC_WEP_ICV_LENGTH);
 
     // Run RC4 on plain text with the seed

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014, 2016 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -41,6 +41,14 @@
 #ifndef __WLAN_HDD_OEM_DATA_H__
 #define __WLAN_HDD_OEM_DATA_H__
 
+#ifndef OEM_DATA_REQ_SIZE
+#define OEM_DATA_REQ_SIZE 500
+#endif
+
+#ifndef OEM_DATA_RSP_SIZE
+#define OEM_DATA_RSP_SIZE 1724
+#endif
+
 #define OEM_APP_SIGNATURE_LEN      16
 #define OEM_APP_SIGNATURE_STR      "QUALCOMM-OEM-APP"
 
@@ -71,7 +79,6 @@ typedef enum
 } eOemErrorCode;
 
 int oem_activate_service(void *pAdapter);
-void oem_deactivate_service(void);
 
 int iw_get_oem_data_cap(struct net_device *dev, struct iw_request_info *info,
                         union iwreq_data *wrqu, char *extra);
@@ -181,13 +188,4 @@ void hdd_SendPeerStatusIndToOemApp(v_MACADDR_t *peerMac,
 	device_mode_t dev_mode);
 #endif //__WLAN_HDD_OEM_DATA_H__
 
-#else
-static inline void hdd_SendPeerStatusIndToOemApp(v_MACADDR_t *peerMac,
-	uint8_t peerStatus,
-	uint8_t peerTimingMeasCap,
-	uint8_t sessionId,
-	tSirSmeChanInfo *chan_info,
-	device_mode_t dev_mode)
-{
-}
 #endif //FEATURE_OEM_DATA_SUPPORT
