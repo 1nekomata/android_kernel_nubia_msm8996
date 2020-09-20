@@ -66,7 +66,9 @@ obj-$(CONFIG_FB_MSM_MDSS_HDMI_PANEL) += mdss_hdmi_audio.o
 obj-$(CONFIG_FB_MSM_MDSS_HDMI_MHL_SII8334) += mhl_sii8334.o mhl_msc.o
 ccflags-y += -DTARGET_HW_MDSS_HDMI
 subdir-ccflags-y += \
-	-Wno-pointer-bool-conversion
+	-Wno-pointer-bool-conversion \
+	-Wno-frame-larger-than= \
+	-Wno-misleading-indentation
 endif
 
 obj-$(CONFIG_FB_MSM_MDSS_WRITEBACK) += mdss_wb.o
