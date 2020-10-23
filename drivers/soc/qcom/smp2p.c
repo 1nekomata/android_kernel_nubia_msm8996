@@ -1949,3 +1949,4 @@ module_init(msm_smp2p_init);
 
 MODULE_DESCRIPTION("MSM Shared Memory Point to Point");
 MODULE_LICENSE("GPL v2");
+

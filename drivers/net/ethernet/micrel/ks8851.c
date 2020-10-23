@@ -637,9 +637,8 @@ static void ks8851_rx_pkts3(struct ks8851_net *ks)
 	/* set dma read address */
 	ks8851_wrreg16(ks, KS_RXFDPR, RXFDPR_RXFPAI | 0x00);
 
-	/* start the packet dma process, and set auto-dequeue rx */
-	ks8851_wrreg16(ks, KS_RXQCR, ks->rc_rxqcr
-				   | RXQCR_SDA | RXQCR_ADRFE);
+	/* start DMA access */
+	ks8851_wrreg16(ks, KS_RXQCR, ks->rc_rxqcr | RXQCR_SDA);
 
 	/* read all frames from rx fifo */
 	ks8851_rdfifo(ks, buf, rxfifosize);
@@ -667,7 +666,6 @@ static void ks8851_rx_pkts3(struct ks8851_net *ks)
 			index32 = 0;
 			rxpkt = (u8 *)&buf32[index32];
 		}
-<<<<<<< HEAD
 		/* swap bytes to make the correct order */
 		for (; rxlen32 > 0; rxlen32--, index32++)
 			buf32[index32] = htonl(buf32[index32]);
@@ -690,13 +688,9 @@ static void ks8851_rx_pkts3(struct ks8851_net *ks)
 				kfree(buf1);
 				break;
 			}
-=======
-
-		/* end DMA access and dequeue packet */
-		ks8851_wrreg16(ks, KS_RXQCR, ks->rc_rxqcr | RXQCR_RRXEF);
->>>>>>> v3.18.140
 	}
-	ks8851_wrreg16(ks, KS_RXQCR, ks->rc_rxqcr);
+	/* end DMA access and dequeue packet */
+	ks8851_wrreg16(ks, KS_RXQCR, ks->rc_rxqcr | RXQCR_RRXEF);
 	kfree(buf);
 }
 
@@ -1760,14 +1754,6 @@ err_netdev:
 err_id:
 	if (gpio_is_valid(gpio))
 		gpio_set_value(gpio, 0);
-<<<<<<< HEAD
-err_id:
-=======
-	regulator_disable(ks->vdd_reg);
-err_reg:
-	regulator_disable(ks->vdd_io);
-err_reg_io:
->>>>>>> v3.18.140
 err_gpio:
 	free_netdev(ndev);
 	return ret;
@@ -1814,3 +1800,4 @@ MODULE_LICENSE("GPL");
 module_param_named(message, msg_enable, int, 0);
 MODULE_PARM_DESC(message, "Message verbosity level (0=none, 31=all)");
 MODULE_ALIAS("spi:ks8851");
+

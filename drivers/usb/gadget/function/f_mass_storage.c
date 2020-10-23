@@ -3291,25 +3291,6 @@ void fsg_common_set_inquiry_string(struct fsg_common *common, const char *vn,
 }
 EXPORT_SYMBOL_GPL(fsg_common_set_inquiry_string);
 
-int fsg_common_run_thread(struct fsg_common *common)
-{
-	common->state = FSG_STATE_IDLE;
-	/* Tell the thread to start working */
-	common->thread_task =
-		kthread_create(fsg_main_thread, common, "file-storage");
-	if (IS_ERR(common->thread_task)) {
-		common->state = FSG_STATE_TERMINATED;
-		return PTR_ERR(common->thread_task);
-	}
-
-	DBG(common, "I/O thread pid: %d\n", task_pid_nr(common->thread_task));
-
-	wake_up_process(common->thread_task);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(fsg_common_run_thread);
-
 static void fsg_common_release(struct kref *ref)
 {
 	struct fsg_common *common = container_of(ref, struct fsg_common, ref);
@@ -3318,6 +3299,7 @@ static void fsg_common_release(struct kref *ref)
 	if (common->state != FSG_STATE_TERMINATED) {
 		raise_exception(common, FSG_STATE_EXIT);
 		wait_for_completion(&common->thread_notifier);
+		common->thread_task = NULL;
 	}
 
 	if (likely(common->luns)) {
@@ -3406,9 +3388,21 @@ static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 #else
 		fsg_common_set_inquiry_string(fsg->common, NULL, NULL);
 #endif
-		ret = fsg_common_run_thread(fsg->common);
-		if (ret)
-			return ret;
+		}
+	
+		if (!fsg->common->thread_task) {
+			fsg->common->state = FSG_STATE_IDLE;
+			fsg->common->thread_task =
+				kthread_create(fsg_main_thread, fsg->common, "file-storage");
+			if (IS_ERR(fsg->common->thread_task)) {
+				int ret = PTR_ERR(fsg->common->thread_task);
+				fsg->common->thread_task = NULL;
+				fsg->common->state = FSG_STATE_TERMINATED;
+				return ret;
+			}
+			DBG(fsg->common, "I/O thread pid: %d\n",
+			    task_pid_nr(fsg->common->thread_task));
+			wake_up_process(fsg->common->thread_task);
 	}
 
 	fsg->gadget = gadget;
@@ -3959,3 +3953,4 @@ void fsg_config_from_params(struct fsg_config *cfg,
 	cfg->fsg_num_buffers = fsg_num_buffers;
 }
 EXPORT_SYMBOL_GPL(fsg_config_from_params);
+

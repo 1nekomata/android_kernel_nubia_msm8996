@@ -3208,6 +3208,7 @@ static DEVICE_ATTR(lut_flags, 0664, NULL, lut_flags_store);
 static DEVICE_ATTR(duty_pcts, 0664, NULL, duty_pcts_store);
 static DEVICE_ATTR(blink, 0664, NULL, blink_store);
 static DEVICE_ATTR(rgb_blink, 0664, NULL, rgb_blink_store);
+
 #ifdef CONFIG_ZTEMT_BREATH_LEDS
 static DEVICE_ATTR(blink_mode, 0664, qpnp_led_mode_show, qpnp_led_mode_store);
 static DEVICE_ATTR(fade_parameter, 0664, fade_parameter_show, fade_parameter_store);

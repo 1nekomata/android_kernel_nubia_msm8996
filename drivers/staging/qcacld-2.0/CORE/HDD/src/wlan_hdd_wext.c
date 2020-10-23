@@ -367,7 +367,6 @@ typedef enum eMonFilterType{
 #define WE_GET_OEM_DATA_CAP                       13
 #endif
 #define WE_GET_SNR                                14
-#define WE_GET_PS_TDCC                            15
 
 /* Private ioctls and their sub-ioctls */
 #define WLAN_PRIV_SET_NONE_GET_NONE               (SIOCIWFIRSTPRIV + 6)
@@ -717,7 +716,7 @@ int hdd_priv_get_data(struct iw_point *p_priv_data,
    return 0;
 }
 
-#define WLAN_HDD_MAX_BW_VALUE	6
+#define WLAN_HDD_MAX_BW_VALUE	5
 
 /**
  * wlan_hdd_validate_mon_channel() - check channel number is valid or not
@@ -759,7 +758,7 @@ VOS_STATUS wlan_hdd_validate_mon_bw(int ch, int bw)
             /* Check if bandwidth from user is valid in 2.4GHz */
             if ((ch >= rfChannels[RF_CHAN_1].channelNum) &&
                 (ch <= rfChannels[RF_CHAN_14].channelNum)) {
-                if ((bw != 5 && bw != 6) && bw > 1) {/* 5M bw == 5; 10M bw == 6 */
+                if (bw > 1) {
                    hddLog(VOS_TRACE_LEVEL_ERROR,
                        "Invalid bw %d for 2.4GHz Chan [%d]",bw,ch);
                    return VOS_STATUS_E_INVAL;
@@ -5348,7 +5347,7 @@ int wlan_hdd_update_phymode(struct net_device *net, tHalHandle hal,
 #endif
     v_BOOL_t band_24 = VOS_FALSE, band_5g = VOS_FALSE;
     v_BOOL_t ch_bond24 = VOS_FALSE, ch_bond5g = VOS_FALSE;
-    tSmeConfigParams smeconfig = {{0}};
+    tSmeConfigParams smeconfig;
     tANI_U32 chwidth = WNI_CFG_CHANNEL_BONDING_MODE_DISABLE;
 #ifdef WLAN_FEATURE_11AC
     tANI_U32 vhtchanwidth;
@@ -7520,8 +7519,6 @@ static int __iw_setnone_getint(struct net_device *dev,
        return -EINVAL;
     }
 
-    vos_mem_zero(&smeConfig, sizeof(smeConfig));
-
     switch (value[0])
     {
         case WE_GET_11D_STATE:
@@ -8583,11 +8580,6 @@ static int __iw_get_char_setnone(struct net_device *dev,
             snprintf(extra, WE_MAX_STR_LEN, "snr=%d",s7snr);
             wrqu->data.length = strlen(extra) + 1;
             break;
-        }
-        case WE_GET_PS_TDCC:
-        {
-            return hdd_wlan_get_ps_tdcc_info(pAdapter, &(wrqu->data.length),
-                                             extra, WE_MAX_STR_LEN);
         }
         default:
         {
@@ -11608,76 +11600,25 @@ VOS_STATUS iw_set_power_params(struct net_device *dev, struct iw_request_info *i
   return VOS_STATUS_SUCCESS;
 }/*iw_set_power_params*/
 
-int hdd_wlan_get_ps_tdcc_info(hdd_adapter_t *adapter,
-			      uint16_t *length,
-			      char *buffer,
-			      uint16_t buf_len)
-{
-	int32_t tdcc_enable, tdcc_percent, ret;
-	uint32_t len;
-
-	ret = wlan_hdd_process_tdcc_ps(adapter, PS_TDCC_GET,
-				       &tdcc_enable, &tdcc_percent);
-	if (ret)
-		return ret;
-
-	len = snprintf(buffer, buf_len, "\nTDCC enable=%d percent=%d\n",
-		       tdcc_enable, tdcc_percent);
-	if (len >= buf_len) {
-		hddLog(LOGE, "Insufficient buffer:%d, %d", buf_len, len);
-		return -E2BIG;
-	}
-
-	*length = len + 1;
-	return 0;
-}
-
-int wlan_hdd_process_tdcc_ps(hdd_adapter_t *adapter,
-			     enum tdcc_cmd_type cmd,
-			     int *enable, int *percentage)
+int wlan_hdd_process_tdcc_ps(hdd_adapter_t *adapter, int enable, int percentage)
 {
 	static int32_t ps_tdcc_enabled = 0;
-	static int32_t ps_tdcc_percent = 0;
 
-	if ((!enable || !percentage) && cmd != PS_TDCC_RESET) {
-		hddLog(LOGE, "Input enable/percentage null pointer");
+	if (enable !=0 && enable != 1) {
+		hddLog(LOGE, "Invalid tdcc enable/disable");
 		return -EINVAL;
 	}
-
-	switch (cmd) {
-	case PS_TDCC_SET:
-		if (*enable != 0 && *enable != 1) {
-			hddLog(LOGE, "Invalid tdcc enable/disable");
-			return -EINVAL;
-		}
-		if (*percentage < 0 || *percentage > 100) {
-			hddLog(LOGE, "Invalid tdcc duty cycle percentage");
-			return -EINVAL;
-		}
-		break;
-	case PS_TDCC_RESET:
-		ps_tdcc_enabled = 0;
-		ps_tdcc_percent = 0;
-		return 0;
-	case PS_TDCC_GET:
-		*enable = ps_tdcc_enabled;
-		*percentage = ps_tdcc_percent;
-		return 0;
-	default:
-		hddLog(LOGE, "Invalid tdcc command %d", cmd);
+	if (percentage < 0 || percentage > 100) {
+		hddLog(LOGE, "Invalid tdcc duty cycle percentage");
 		return -EINVAL;
 	}
-
-	if (*enable == ps_tdcc_enabled &&
-	    (*percentage == ps_tdcc_percent || *enable == 0))
+	if (enable == ps_tdcc_enabled)
 		return 0;
 
-	hddLog(LOG1, "Set tdcc enable:%d percentage:%d", *enable, *percentage);
-	ps_tdcc_enabled = *enable;
-	ps_tdcc_percent = *percentage;
+	ps_tdcc_enabled = enable;
 	return process_wma_set_command_twoargs((int)adapter->sessionId,
 					       (int)GEN_PARAM_PS_TDCC,
-					       *enable, *percentage, GEN_CMD);
+					       enable, percentage, GEN_CMD);
 }
 
 static int __iw_set_two_ints_getnone(struct net_device *dev,
@@ -11721,9 +11662,8 @@ static int __iw_set_two_ints_getnone(struct net_device *dev,
         break;
 #endif
     case WE_SET_PS_TDCC:
-        ret = wlan_hdd_process_tdcc_ps(pAdapter, PS_TDCC_SET,
-                                       &value[1], &value[2]);
-        break;
+	ret = wlan_hdd_process_tdcc_ps(pAdapter, value[1], value[2]);
+	break;
     case WE_SET_MON_MODE_CHAN:
         /*
          * TODO: Remove this private implementation use standard
@@ -11761,10 +11701,10 @@ static int __iw_set_two_ints_getnone(struct net_device *dev,
             }
             vos_mem_zero(roam_profile, sizeof(*roam_profile));
 
-            if (vht_channel_width == 5) {
+            if (vht_channel_width == 4) {
                 vht_channel_width = 0;
                 roam_profile->sub20_channelwidth = SUB20_MODE_5MHZ;
-            } else if (vht_channel_width == 6) {
+            } else if (vht_channel_width == 5) {
                 vht_channel_width = 0;
                 roam_profile->sub20_channelwidth = SUB20_MODE_10MHZ;
             } else {
@@ -13062,10 +13002,6 @@ static const struct iw_priv_args we_private_args[] = {
     {   WE_SET_PS_TDCC,
         IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 2,
 	0, "set_ps_tdcc" },
-    {   WE_GET_PS_TDCC,
-        0,
-        IW_PRIV_TYPE_CHAR | WE_MAX_STR_LEN,
-        "get_ps_tdcc" },
 #ifdef FEATURE_PBM_MAGIC_WOW
     {
         WE_SET_WOW_START,
